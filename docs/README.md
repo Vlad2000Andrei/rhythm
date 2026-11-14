@@ -103,6 +103,11 @@ C:\Users\cursa\AppData\AndroidCLI\android.exe preview render "?:app" `
 ```
 
 ### 3. Install Over Wireless ADB
+For an already-paired phone using Wireless Debugging (`_adb-tls-connect._tcp`), start the ADB server and wait ~4 seconds in the same command so mDNS discovers the device before installing:
+```powershell
+C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe start-server; Start-Sleep -Seconds 4; C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe -s adb-48201FDAS0004G-PnRogK._adb-tls-connect._tcp install -r app\build\outputs\apk\debug\app-debug.apk
+```
+If pairing a new device for the first time:
 ```powershell
 C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe pair <hostname-or-ip>:<pairing-port> <6-digit-code>
 C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe connect <device-ip>:<connect-port>
