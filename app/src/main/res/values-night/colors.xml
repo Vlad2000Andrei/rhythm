@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_preview_card_bg">#121417</color>
+    <color name="widget_preview_card_border">#262A30</color>
+    <color name="widget_preview_subcard_bg">#1B1E23</color>
+    <color name="widget_preview_subcard_border">#2A2E35</color>
+    <color name="widget_preview_active_task_bg">#1D2127</color>
+    <color name="widget_preview_active_task_border">#323842</color>
+    <color name="widget_preview_completed_task_bg">#171A1F</color>
+    <color name="widget_preview_completed_task_border">#242830</color>
+    <color name="widget_preview_ink_primary">#F3F4F6</color>
+    <color name="widget_preview_ink_secondary">#A1A7B0</color>
+    <color name="widget_preview_ink_muted">#707680</color>
+    <color name="widget_preview_divider">#252930</color>
+    <color name="widget_preview_progress_track">#2A2F38</color>
+    <color name="widget_preview_progress_fill">#F3F4F6</color>
+    <color name="widget_preview_matrix_empty">#242830</color>
+    <color name="widget_preview_matrix_x">#889CA3AF</color>
+    <color name="widget_preview_checkbox_border">#4B5563</color>
+    <color name="widget_preview_checkbox_bg">#121417</color>
+    <color name="widget_preview_now_badge_bg">#1E3A5F</color>
+    <color name="widget_preview_now_badge_text">#93C5FD</color>
+    <color name="widget_preview_emerald">#34D399</color>
+    <color name="widget_preview_emerald_62">#288A6B</color>
+    <color name="widget_preview_emerald_32">#1D5140</color>
+    <color name="widget_preview_emerald_muted">#7334D399</color>
+    <color name="widget_preview_blue">#2563EB</color>
+    <color name="widget_preview_blue_62">#1E4699</color>
+    <color name="widget_preview_blue_32">#182D5B</color>
+    <color name="widget_preview_amber">#D97706</color>
+</resources>

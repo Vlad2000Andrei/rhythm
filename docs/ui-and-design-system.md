@@ -172,3 +172,7 @@ All three home screen widgets adapt smoothly across arbitrary resized cell bound
    - Built with piecewise `RemoteViews` (`widget_upcoming_tasks.xml`) so tapping any task row directly toggles that `(habitId, instanceIndex)` completion in Room (`ACTION_TOGGLE_TASK`) and refreshes all widgets in place without opening the app.
 4. **Reconfigurable Settings (`WidgetConfigActivity`)**:
    - All 3 widgets declare `android:widgetFeatures="reconfigurable"` and launch `WidgetConfigActivity`, offering a live size-tab preview (`2×4 Tall`, `4×2 / 4×3`, `4×4 Square`), **Light Mode** vs. **Dark Mode** surface switching for every widget, and an interactive **Target Habit** selector for the Single-Habit widget.
+5. **Android Widget Picker Previews (`previewLayout` + `previewImage`)**:
+   - Each `<appwidget-provider>` (`widget_habit_cadence_info.xml`, `widget_overall_cadence_info.xml`, `widget_upcoming_tasks_info.xml`) defines both:
+     - `android:previewLayout` (API 31+): `@RemoteView`-compliant XML layouts (`widget_preview_habit_cadence.xml`, `widget_preview_overall_cadence.xml`, `widget_preview_upcoming_tasks.xml`) using bundled `Inter` / `JetBrains Mono` fonts and day/night color tokens (`res/values/colors.xml`, `res/values-night/colors.xml`) so the Android widget picker scales cleanly and adapts automatically to Light and Dark system themes.
+     - `android:previewImage` (API 26–30 & fallback): High-DPI `nodpi` PNG assets (`drawable-nodpi/widget_preview_*.png` and `drawable-night-nodpi/widget_preview_*.png`) matching `WidgetBitmapRenderer` proportions.

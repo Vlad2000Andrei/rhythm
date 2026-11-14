@@ -9,6 +9,8 @@
     android:minResizeHeight="160dp"
     android:minResizeWidth="110dp"
     android:minWidth="120dp"
+    android:previewImage="@drawable/widget_preview_upcoming_tasks"
+    android:previewLayout="@layout/widget_preview_upcoming_tasks"
     android:resizeMode="horizontal|vertical"
     android:targetCellHeight="3"
     android:targetCellWidth="4"

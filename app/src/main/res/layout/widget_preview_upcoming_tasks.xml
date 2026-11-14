@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_card_bg"
+    android:orientation="vertical"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="12dp">
+
+    <!-- Top meta row: Date | Done pill -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="@font/jetbrains_mono_semibold"
+            android:letterSpacing="0.05"
+            android:maxLines="1"
+            android:text="@string/widget_preview_upcoming_date"
+            android:textColor="@color/widget_preview_ink_muted"
+            android:textSize="8.5dp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/widget_preview_subcard_pill"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="7dp"
+            android:paddingVertical="2.5dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/jetbrains_mono_bold"
+                android:maxLines="1"
+                android:text="@string/widget_preview_upcoming_frac"
+                android:textColor="@color/widget_preview_ink_primary"
+                android:textSize="9.5dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/jetbrains_mono_medium"
+                android:maxLines="1"
+                android:text="@string/widget_preview_done_suffix"
+                android:textColor="@color/widget_preview_ink_muted"
+                android:textSize="7.5dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Headline row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="bottom"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="@font/inter_bold"
+            android:maxLines="1"
+            android:text="@string/widget_preview_todays_habits"
+            android:textColor="@color/widget_preview_ink_primary"
+            android:textSize="17dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/jetbrains_mono_medium"
+            android:maxLines="1"
+            android:text="@string/widget_preview_pct_done"
+            android:textColor="@color/widget_preview_ink_secondary"
+            android:textSize="9dp" />
+    </LinearLayout>
+
+    <!-- Segmented multi-color progress bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="7dp"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_bar_emerald"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_bar_amber"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_bar_track"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_bar_track"
+            android:importantForAccessibility="no" />
+    </LinearLayout>
+
+    <!-- 3 interactive-style task rows -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <!-- Row 1: Deep Work (NOW) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginBottom="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_task_active"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:background="@drawable/widget_preview_checkbox_now"
+                android:importantForAccessibility="no" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="9dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/inter_semibold"
+                        android:maxLines="1"
+                        android:text="@string/widget_preview_habit_title"
+                        android:textColor="@color/widget_preview_ink_primary"
+                        android:textSize="11.5dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="5dp"
+                        android:background="@drawable/widget_preview_now_badge"
+                        android:fontFamily="@font/jetbrains_mono_bold"
+                        android:maxLines="1"
+                        android:paddingHorizontal="4dp"
+                        android:paddingVertical="1dp"
+                        android:text="@string/widget_preview_now"
+                        android:textColor="@color/widget_preview_now_badge_text"
+                        android:textSize="7dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/jetbrains_mono_medium"
+                    android:maxLines="1"
+                    android:text="@string/widget_preview_task1_sub"
+                    android:textColor="@color/widget_preview_ink_secondary"
+                    android:textSize="8.5dp" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:background="@drawable/widget_preview_dot_blue"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+
+        <!-- Row 2: Hydration Target -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginBottom="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_task_active_subtle"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:background="@drawable/widget_preview_checkbox_unchecked"
+                android:importantForAccessibility="no" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="9dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/inter_semibold"
+                    android:maxLines="1"
+                    android:text="@string/widget_preview_task2_title"
+                    android:textColor="@color/widget_preview_ink_primary"
+                    android:textSize="11.5dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/jetbrains_mono_medium"
+                    android:maxLines="1"
+                    android:text="@string/widget_preview_task2_sub"
+                    android:textColor="@color/widget_preview_ink_secondary"
+                    android:textSize="8.5dp" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:background="@drawable/widget_preview_dot_amber"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+
+        <!-- Row 3: 10-Page Reading (Completed) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="@drawable/widget_preview_task_completed"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/widget_preview_checkbox_checked_emerald" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="9dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/inter_medium"
+                    android:maxLines="1"
+                    android:text="@string/widget_preview_task3_title"
+                    android:textColor="@color/widget_preview_ink_muted"
+                    android:textSize="11.5dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/jetbrains_mono_medium"
+                    android:maxLines="1"
+                    android:text="@string/widget_preview_task3_sub"
+                    android:textColor="@color/widget_preview_ink_muted"
+                    android:textSize="8.5dp" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:background="@drawable/widget_preview_dot_emerald_muted"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Footer divider + summary -->
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="5dp"
+        android:background="@color/widget_preview_divider"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="@font/jetbrains_mono_medium"
+            android:maxLines="1"
+            android:text="@string/widget_preview_upcoming_next"
+            android:textColor="@color/widget_preview_ink_secondary"
+            android:textSize="8.5dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:fontFamily="@font/jetbrains_mono_semibold"
+            android:letterSpacing="0.04"
+            android:maxLines="1"
+            android:text="@string/widget_preview_upcoming_more"
+            android:textColor="@color/widget_preview_ink_primary"
+            android:textSize="8.5dp" />
+    </LinearLayout>
+
+</LinearLayout>

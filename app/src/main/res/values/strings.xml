@@ -9,4 +9,48 @@
     <string name="widget_canvas_cd">Rhythm cadence widget</string>
     <string name="widget_toggle_task_cd">Toggle task completion</string>
     <string name="widget_open_dashboard_cd">Open Rhythm dashboard</string>
+
+    <!-- Widget Picker Preview Labels -->
+    <string name="widget_preview_domain_badge">FOCUS · BLOCK 01</string>
+    <string name="widget_preview_habit_title">Deep Work</string>
+    <string name="widget_preview_habit_subtitle">Daily · 8:30 AM</string>
+    <string name="widget_preview_streak_num">12</string>
+    <string name="widget_preview_days_active">DAYS ACTIVE</string>
+    <string name="widget_preview_activity_past">ACTIVITY · PAST 16 WEEKS</string>
+    <string name="widget_preview_less">LESS</string>
+    <string name="widget_preview_more">MORE</string>
+    <string name="widget_preview_day_m">M</string>
+    <string name="widget_preview_day_t">T</string>
+    <string name="widget_preview_day_w">W</string>
+    <string name="widget_preview_day_f">F</string>
+    <string name="widget_preview_day_s">S</string>
+    <string name="widget_preview_overall_date">SAT, OCT 24 · W43</string>
+    <string name="widget_preview_overall_consistency" formatted="false">86% CONSISTENCY</string>
+    <string name="widget_preview_morning">MORNING</string>
+    <string name="widget_preview_afternoon">AFTERNOON</string>
+    <string name="widget_preview_evening">EVENING</string>
+    <string name="widget_preview_frac_2_2">2/2</string>
+    <string name="widget_preview_frac_1_2">1/2</string>
+    <string name="widget_preview_frac_0_1">0/1</string>
+    <string name="widget_preview_cadence_matrix">CADENCE MATRIX</string>
+    <string name="widget_preview_overall_summary">12D STREAK · 74 THIS MO</string>
+    <string name="widget_preview_month_jul">JUL</string>
+    <string name="widget_preview_month_aug">AUG</string>
+    <string name="widget_preview_month_sep">SEP</string>
+    <string name="widget_preview_month_oct">OCT</string>
+    <string name="widget_preview_overall_next">NEXT: Hydration Target · 1:30 PM</string>
+    <string name="widget_preview_open">OPEN ›</string>
+    <string name="widget_preview_upcoming_date">TODAY · SAT, OCT 24</string>
+    <string name="widget_preview_upcoming_frac">2/4</string>
+    <string name="widget_preview_done_suffix"> DONE</string>
+    <string name="widget_preview_todays_habits">Today\'s Habits</string>
+    <string name="widget_preview_pct_done" formatted="false">50% Done</string>
+    <string name="widget_preview_now">NOW</string>
+    <string name="widget_preview_task1_sub">8:30 AM · Focus · Block 01</string>
+    <string name="widget_preview_task2_title">Hydration Target</string>
+    <string name="widget_preview_task2_sub">1:30 PM · 2/2 · Health</string>
+    <string name="widget_preview_task3_title">10-Page Reading</string>
+    <string name="widget_preview_task3_sub">8:00 AM · Mind · Done</string>
+    <string name="widget_preview_upcoming_next">NEXT: Deep Work · 8:30 AM</string>
+    <string name="widget_preview_upcoming_more">+1 MORE · OPEN ›</string>
 </resources>
