@@ -1,0 +1,1 @@
+Every time you change something, make sure that the documentation under @docs/ is up to date.

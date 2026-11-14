@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">Rhythm</string>
+    <string name="widget_habit_cadence_name">Habit Cadence Matrix</string>
+    <string name="widget_habit_cadence_desc">Track streak, consistency &amp; cadence heatmap for a single habit</string>
+    <string name="widget_overall_cadence_name">Overall Cadence Matrix</string>
+    <string name="widget_overall_cadence_desc">Time-block progress bars &amp; multi-week rhythm heatmap</string>
+    <string name="widget_upcoming_tasks_name">Upcoming Tasks</string>
+    <string name="widget_upcoming_tasks_desc">Interactive checklist for today\'s scheduled habits</string>
+    <string name="widget_canvas_cd">Rhythm cadence widget</string>
+    <string name="widget_toggle_task_cd">Toggle task completion</string>
+    <string name="widget_open_dashboard_cd">Open Rhythm dashboard</string>
+</resources>
