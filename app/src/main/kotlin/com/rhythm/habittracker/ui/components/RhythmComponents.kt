@@ -230,12 +230,18 @@ private data class ConfettiParticle(
 
 /**
  * Non-interactive celebratory confetti burst rendered when the user completes
- * the final scheduled habit task of a day.
+ * a day-part bucket or the final scheduled habit task of a day.
  */
 @Composable
 fun RhythmConfettiOverlay(
     triggerKey: Int,
     modifier: Modifier = Modifier,
+    emitterOriginFractions: List<Pair<Float, Float>>? = null,
+    paletteColors: List<Color>? = null,
+    particleCount: Int = 76,
+    spreadJitterX: Float = 0.12f,
+    spreadJitterY: Float = 0.06f,
+    extraUpwardImpulse: Float = 0f,
 ) {
     if (triggerKey <= 0) return
 
@@ -254,18 +260,20 @@ fun RhythmConfettiOverlay(
 
     val particles = remember(triggerKey) {
         val rng = Random(triggerKey * 9973L + 42L)
-        val palette = HabitAccentColor.entries.map { it.color } + ConsistencyEmerald
-        val emitters = listOf(0.22f to 0.20f, 0.50f to 0.16f, 0.78f to 0.20f)
+        val palette = paletteColors?.takeIf { it.isNotEmpty() }
+            ?: (HabitAccentColor.entries.map { it.color } + ConsistencyEmerald)
+        val emitters = emitterOriginFractions?.takeIf { it.isNotEmpty() }
+            ?: listOf(0.22f to 0.20f, 0.50f to 0.16f, 0.78f to 0.20f)
 
-        List(76) { idx ->
+        List(particleCount) { idx ->
             val (originX, originY) = emitters[idx % emitters.size]
             val spreadAngle = (-PI * 0.85 + rng.nextDouble() * PI * 0.70).toFloat()
             val speed = 0.38f + rng.nextFloat() * 0.55f
             ConfettiParticle(
-                startXFraction = originX + (rng.nextFloat() - 0.5f) * 0.12f,
-                startYFraction = originY + (rng.nextFloat() - 0.5f) * 0.06f,
+                startXFraction = originX + (rng.nextFloat() - 0.5f) * spreadJitterX,
+                startYFraction = originY + (rng.nextFloat() - 0.5f) * spreadJitterY,
                 velocityX = cos(spreadAngle) * speed * 0.72f,
-                velocityY = sin(spreadAngle) * speed - 0.15f,
+                velocityY = sin(spreadAngle) * speed - 0.15f - extraUpwardImpulse,
                 swayAmplitude = 0.015f + rng.nextFloat() * 0.03f,
                 swayFrequency = 4f + rng.nextFloat() * 6f,
                 swayPhase = rng.nextFloat() * (2f * PI.toFloat()),

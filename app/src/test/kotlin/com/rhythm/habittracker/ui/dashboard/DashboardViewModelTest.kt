@@ -425,6 +425,113 @@ class DashboardViewModelTest {
         assertEquals(LocalDate.of(2026, 5, 17), lastColumnDates.last())
     }
 
+    @Test
+    fun dashboard_sortsTasksByDueTimeInFlowAndAsTieBreaker() = runTest {
+        val today = LocalDate.of(2026, 5, 15)
+        val nightHabit = Habit(
+            id = 41L,
+            title = "Night Wind Down",
+            domain = "Health",
+            sortOrder = 0,
+            targetTimes = listOf(TargetTimeSlot("n1", 22, 0, true)),
+            createdAtEpochDay = today.minusDays(5).toEpochDay(),
+        )
+        val multiHabit = Habit(
+            id = 42L,
+            title = "Hydrate",
+            domain = "Health",
+            sortOrder = 1,
+            targetPerPeriod = 2,
+            targetTimes = listOf(
+                TargetTimeSlot("m1", 7, 30, true),
+                TargetTimeSlot("m2", 18, 15, true),
+            ),
+            createdAtEpochDay = today.minusDays(5).toEpochDay(),
+        )
+        val middayHabit = Habit(
+            id = 43L,
+            title = "Midday Walk",
+            domain = "Health",
+            sortOrder = 2,
+            targetTimes = listOf(TargetTimeSlot("d1", 12, 30, true)),
+            createdAtEpochDay = today.minusDays(5).toEpochDay(),
+        )
+        val completedLate = Habit(
+            id = 44L,
+            title = "Evening Log",
+            domain = "Mind",
+            sortOrder = 0,
+            targetTimes = listOf(TargetTimeSlot("c1", 20, 0, true)),
+            createdAtEpochDay = today.minusDays(5).toEpochDay(),
+        )
+        val completedEarly = Habit(
+            id = 45L,
+            title = "Morning Breath",
+            domain = "Mind",
+            sortOrder = 3,
+            targetTimes = listOf(TargetTimeSlot("c2", 6, 45, true)),
+            createdAtEpochDay = today.minusDays(5).toEpochDay(),
+        )
+        val untimedHabit = Habit(
+            id = 46L,
+            title = "Anytime Stretch",
+            domain = "Health",
+            sortOrder = 0,
+            targetTimes = emptyList(),
+            createdAtEpochDay = today.minusDays(5).toEpochDay(),
+        )
+
+        val fakeRepo = FakeDashboardRepository(
+            initialHabits = listOf(
+                nightHabit,
+                multiHabit,
+                middayHabit,
+                completedLate,
+                completedEarly,
+                untimedHabit,
+            ),
+            initialCompletions = mapOf(today to setOf(44L, 45L)),
+        )
+        val viewModel = DashboardViewModel(
+            repository = fakeRepo,
+            clockTodayProvider = { today },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        val flowState = viewModel.uiState.value
+        assertEquals(
+            listOf(
+                "Hydrate" to 0,         // 07:30
+                "Midday Walk" to 0,     // 12:30
+                "Hydrate" to 1,         // 18:15
+                "Night Wind Down" to 0, // 22:00
+                "Anytime Stretch" to 0, // untimed (Int.MAX_VALUE)
+            ),
+            flowState.pendingHabits.map { it.habit.title to it.instanceIndex },
+        )
+        assertEquals(
+            listOf("Morning Breath", "Evening Log"),
+            flowState.completedHabits.map { it.habit.title },
+        )
+
+        viewModel.setSortMode(HabitSortMode.DOMAIN)
+        advanceUntilIdle()
+        val domainState = viewModel.uiState.value
+        assertEquals(
+            listOf(
+                "Hydrate" to 0,
+                "Midday Walk" to 0,
+                "Hydrate" to 1,
+                "Night Wind Down" to 0,
+                "Anytime Stretch" to 0,
+            ),
+            domainState.pendingHabits.map { it.habit.title to it.instanceIndex },
+        )
+    }
+
     private fun DashboardUiState.StreakForHabit(habitId: Long): Int =
         (pendingHabits + completedHabits).first { it.habit.id == habitId }.streakDays
 }

@@ -137,7 +137,7 @@ flowchart LR
     Builder --> Matrix["CadenceEvaluator.buildCadenceMatrix (14 weeks)"]
     Builder --> Horizon["CadenceEvaluator.buildWeeklyHorizon (Mon..Sun)"]
     Builder --> Buckets["BucketProgress (Morning / During the day / Evening per instance)"]
-    Builder --> Lists["pendingHabits & completedHabits (expanded per daily instance)"]
+    Builder --> Lists["pendingHabits & completedHabits (expanded per daily instance, sorted by due time)"]
     Builder --> Momentum["Momentum Insight Copy"]
 ```
 

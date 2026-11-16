@@ -285,19 +285,20 @@ class DashboardViewModel(
             allDueCardItems.filter { it.habit.domain.equals(effectiveDomain, ignoreCase = true) }
         }
 
+        val dueTimeComparator = compareBy<HabitCardItem> { it.timeSlot?.minuteOfDay ?: Int.MAX_VALUE }
+            .thenBy { it.habit.sortOrder }
+            .thenBy { it.instanceIndex }
+            .thenBy { it.habit.id }
+
         val sortedCards = when (sortMode) {
-            HabitSortMode.FLOW -> cardItems.sortedWith(
-                compareBy<HabitCardItem> { it.habit.sortOrder }.thenBy { it.instanceIndex }
-            )
+            HabitSortMode.FLOW -> cardItems.sortedWith(dueTimeComparator)
             HabitSortMode.STREAK -> cardItems.sortedWith(
                 compareByDescending<HabitCardItem> { it.streakDays }
-                    .thenBy { it.habit.sortOrder }
-                    .thenBy { it.instanceIndex }
+                    .then(dueTimeComparator)
             )
             HabitSortMode.DOMAIN -> cardItems.sortedWith(
                 compareBy<HabitCardItem> { it.habit.domain }
-                    .thenBy { it.habit.sortOrder }
-                    .thenBy { it.instanceIndex }
+                    .then(dueTimeComparator)
             )
         }
 

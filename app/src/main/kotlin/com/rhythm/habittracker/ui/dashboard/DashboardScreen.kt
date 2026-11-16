@@ -7,6 +7,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
@@ -20,6 +22,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +43,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -82,8 +86,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,13 +102,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -115,6 +133,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -223,6 +242,12 @@ fun DashboardScreenContent(
     var prevCompletedCount by remember { mutableIntStateOf(uiState.completedCount) }
     var prevTotalCount by remember { mutableIntStateOf(uiState.totalCount) }
     var prevWasLoading by remember { mutableStateOf(uiState.isLoading) }
+    var prevBucketSnapshots by remember { mutableStateOf<Map<TimeOfDayBucket, Pair<Int, Int>>>(emptyMap()) }
+    val activeCelebrations = remember { mutableStateListOf<DayPartCelebrationEvent>() }
+    var nextCelebrationId by remember { mutableIntStateOf(0) }
+    var overlayRootOffset by remember { mutableStateOf(Offset.Zero) }
+    var overlayRootSize by remember { mutableStateOf(IntSize.Zero) }
+    val bucketBarRects = remember { mutableStateMapOf<TimeOfDayBucket, Rect>() }
 
     LaunchedEffect(uiState.selectedDate) {
         isFabMenuExpanded = false
@@ -239,26 +264,68 @@ fun DashboardScreenContent(
         }
     }
 
-    LaunchedEffect(uiState.isLoading, uiState.selectedDate, uiState.completedCount, uiState.totalCount) {
+    LaunchedEffect(
+        uiState.isLoading,
+        uiState.selectedDate,
+        uiState.completedCount,
+        uiState.totalCount,
+        uiState.bucketProgress,
+    ) {
         if (!uiState.isLoading) {
             val sameDate = !prevWasLoading && prevDate == uiState.selectedDate
-            if (
-                sameDate &&
-                uiState.totalCount > 0 &&
-                prevTotalCount == uiState.totalCount &&
-                prevCompletedCount in 0 until uiState.totalCount &&
-                uiState.completedCount == uiState.totalCount
-            ) {
-                confettiTrigger++
+            if (!sameDate) {
+                activeCelebrations.clear()
+            } else {
+                if (
+                    uiState.totalCount > 0 &&
+                    prevTotalCount == uiState.totalCount &&
+                    prevCompletedCount in 0 until uiState.totalCount &&
+                    uiState.completedCount == uiState.totalCount
+                ) {
+                    confettiTrigger++
+                }
+                uiState.bucketProgress.forEach { bucketItem ->
+                    val prev = prevBucketSnapshots[bucketItem.bucket]
+                    if (
+                        prev != null &&
+                        bucketItem.total > 0 &&
+                        prev.second == bucketItem.total &&
+                        prev.first in 0 until bucketItem.total &&
+                        bucketItem.completed == bucketItem.total
+                    ) {
+                        activeCelebrations.removeAll { it.bucket == bucketItem.bucket }
+                        activeCelebrations.add(
+                            DayPartCelebrationEvent(
+                                id = ++nextCelebrationId,
+                                bucket = bucketItem.bucket,
+                                originRect = bucketBarRects[bucketItem.bucket],
+                            ),
+                        )
+                    } else if (bucketItem.total == 0 || bucketItem.completed < bucketItem.total) {
+                        activeCelebrations.removeAll { it.bucket == bucketItem.bucket }
+                    }
+                }
             }
             prevDate = uiState.selectedDate
             prevCompletedCount = uiState.completedCount
             prevTotalCount = uiState.totalCount
+            prevBucketSnapshots = uiState.bucketProgress.associate { it.bucket to (it.completed to it.total) }
             prevWasLoading = false
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    val flyingBuckets = remember(activeCelebrations.toList()) {
+        activeCelebrations.map { it.bucket }.toSet()
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coords ->
+                overlayRootOffset = coords.positionInRoot()
+                overlayRootSize = coords.size
+            },
+    ) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = RhythmSurface,
@@ -307,6 +374,21 @@ fun DashboardScreenContent(
                     WeeklyHorizonStrip(
                         days = uiState.weeklyHorizon,
                         onSelectDate = onSelectDate,
+                    )
+                }
+
+                item(key = "day_part_progress") {
+                    DayPartProgressSection(
+                        bucketProgress = uiState.bucketProgress,
+                        flyingBuckets = flyingBuckets,
+                        onBarBoundsChanged = { bucket, rootBounds ->
+                            bucketBarRects[bucket] = Rect(
+                                left = rootBounds.left - overlayRootOffset.x,
+                                top = rootBounds.top - overlayRootOffset.y,
+                                right = rootBounds.right - overlayRootOffset.x,
+                                bottom = rootBounds.bottom - overlayRootOffset.y,
+                            )
+                        },
                     )
                 }
 
@@ -542,6 +624,19 @@ fun DashboardScreenContent(
             triggerKey = confettiTrigger,
             modifier = Modifier.fillMaxSize(),
         )
+
+        activeCelebrations.forEach { event ->
+            key(event.id) {
+                DayPartCelebrationOverlay(
+                    event = event,
+                    overlayRootSize = overlayRootSize,
+                    liveRectProvider = { bucketBarRects[event.bucket] },
+                    onFinished = { finishedId ->
+                        activeCelebrations.removeAll { it.id == finishedId }
+                    },
+                )
+            }
+        }
     }
 
     if (showProfileDialog) {
@@ -903,20 +998,28 @@ private fun ProgressAnchorSection(uiState: DashboardUiState) {
                 )
             }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            uiState.bucketProgress.forEach { bucketItem ->
-                val chipWeight = if (bucketItem.bucket == TimeOfDayBucket.DURING_THE_DAY) 1.24f else 0.88f
-                TimeBucketCard(
-                    item = bucketItem,
-                    modifier = Modifier.weight(chipWeight),
-                )
-            }
+@Composable
+private fun DayPartProgressSection(
+    bucketProgress: List<BucketProgress>,
+    flyingBuckets: Set<TimeOfDayBucket>,
+    onBarBoundsChanged: (TimeOfDayBucket, Rect) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        bucketProgress.forEach { bucketItem ->
+            val chipWeight = if (bucketItem.bucket == TimeOfDayBucket.DURING_THE_DAY) 1.24f else 0.88f
+            TimeBucketCard(
+                item = bucketItem,
+                isFlying = bucketItem.bucket in flyingBuckets,
+                onBarBoundsChanged = { bounds -> onBarBoundsChanged(bucketItem.bucket, bounds) },
+                modifier = Modifier.weight(chipWeight),
+            )
         }
     }
 }
@@ -924,6 +1027,8 @@ private fun ProgressAnchorSection(uiState: DashboardUiState) {
 @Composable
 private fun TimeBucketCard(
     item: BucketProgress,
+    isFlying: Boolean,
+    onBarBoundsChanged: (Rect) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val animatedProgress by animateFloatAsState(
@@ -988,15 +1093,341 @@ private fun TimeBucketCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(5.dp)
+                    .onGloballyPositioned { coords ->
+                        onBarBoundsChanged(coords.boundsInRoot())
+                    }
                     .clip(CircleShape)
                     .background(RhythmSurfaceContainer),
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(animatedProgress)
-                        .fillMaxHeight()
-                        .clip(CircleShape)
-                        .background(barColor),
+                if (!isFlying) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(animatedProgress)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(barColor),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class DayPartCelebrationEvent(
+    val id: Int,
+    val bucket: TimeOfDayBucket,
+    val originRect: Rect?,
+)
+
+private val DayPartRainbowColors = listOf(
+    Color(0xFFFF1744), // Red
+    Color(0xFFFF9100), // Orange
+    Color(0xFFFFEA00), // Yellow
+    Color(0xFF00E676), // Green
+    Color(0xFF00E5FF), // Cyan
+    Color(0xFF2979FF), // Blue
+    Color(0xFFD500F9), // Violet
+    Color(0xFFFF1744), // Wrap back to Red
+)
+
+private val DayPartConfettiPalette = listOf(
+    Color(0xFFFF1744),
+    Color(0xFFFF9100),
+    Color(0xFFFFEA00),
+    Color(0xFF00E676),
+    Color(0xFF00E5FF),
+    Color(0xFF2979FF),
+    Color(0xFFD500F9),
+    ConsistencyEmerald,
+)
+
+private fun sampleRainbowColor(phase: Float): Color {
+    val normalized = ((phase % 1f) + 1f) % 1f
+    val maxIdx = DayPartRainbowColors.lastIndex
+    val scaled = normalized * maxIdx
+    val idx = scaled.toInt().coerceIn(0, maxIdx - 1)
+    val frac = scaled - idx
+    return lerp(DayPartRainbowColors[idx], DayPartRainbowColors[idx + 1], frac)
+}
+
+private fun lerpFloat(start: Float, end: Float, fraction: Float): Float =
+    start + (end - start) * fraction
+
+private fun fallbackRectFor(bucket: TimeOfDayBucket, canvasSize: Size, densityPx: Float): Rect {
+    val w = canvasSize.width.coerceAtLeast(1f)
+    val h = canvasSize.height.coerceAtLeast(1f)
+    val centerXFrac = when (bucket) {
+        TimeOfDayBucket.MORNING -> 0.18f
+        TimeOfDayBucket.DURING_THE_DAY -> 0.50f
+        TimeOfDayBucket.EVENING -> 0.82f
+    }
+    val barHalfW = if (bucket == TimeOfDayBucket.DURING_THE_DAY) w * 0.16f else w * 0.11f
+    val barHalfH = 2.5f * densityPx
+    val cx = w * centerXFrac
+    val cy = h * 0.52f
+    return Rect(
+        left = cx - barHalfW,
+        top = cy - barHalfH,
+        right = cx + barHalfW,
+        bottom = cy + barHalfH,
+    )
+}
+
+@Composable
+private fun DayPartCelebrationOverlay(
+    event: DayPartCelebrationEvent,
+    overlayRootSize: IntSize,
+    liveRectProvider: () -> Rect?,
+    onFinished: (Int) -> Unit,
+) {
+    val emitters = remember(event.id, overlayRootSize) {
+        val w = overlayRootSize.width.toFloat()
+        val h = overlayRootSize.height.toFloat()
+        val rect = event.originRect
+        if (rect != null && w > 0f && h > 0f) {
+            val yFrac = (rect.center.y / h).coerceIn(0.06f, 0.92f)
+            val leftFrac = ((rect.left + rect.width * 0.18f) / w).coerceIn(0.04f, 0.96f)
+            val midFrac = (rect.center.x / w).coerceIn(0.04f, 0.96f)
+            val rightFrac = ((rect.right - rect.width * 0.18f) / w).coerceIn(0.04f, 0.96f)
+            listOf(leftFrac to yFrac, midFrac to yFrac, rightFrac to yFrac)
+        } else {
+            val fallbackX = when (event.bucket) {
+                TimeOfDayBucket.MORNING -> 0.18f
+                TimeOfDayBucket.DURING_THE_DAY -> 0.50f
+                TimeOfDayBucket.EVENING -> 0.82f
+            }
+            listOf(
+                (fallbackX - 0.05f) to 0.52f,
+                fallbackX to 0.52f,
+                (fallbackX + 0.05f) to 0.52f,
+            )
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        RhythmConfettiOverlay(
+            triggerKey = event.id,
+            modifier = Modifier.fillMaxSize(),
+            emitterOriginFractions = emitters,
+            paletteColors = DayPartConfettiPalette,
+            particleCount = 68,
+            spreadJitterX = 0.03f,
+            spreadJitterY = 0.012f,
+            extraUpwardImpulse = 0.18f,
+        )
+
+        DayPartRainbowPerimeterOverlay(
+            event = event,
+            liveRectProvider = liveRectProvider,
+            onFinished = onFinished,
+        )
+    }
+}
+
+@Composable
+private fun DayPartRainbowPerimeterOverlay(
+    event: DayPartCelebrationEvent,
+    liveRectProvider: () -> Rect?,
+    onFinished: (Int) -> Unit,
+) {
+    val progressAnim = remember(event.id) { Animatable(0f) }
+    val currentOnFinished by rememberUpdatedState(onFinished)
+    val density = LocalDensity.current
+    val statusTopPx = WindowInsets.statusBars.getTop(density).toFloat()
+    val navBottomPx = WindowInsets.navigationBars.getBottom(density).toFloat()
+
+    val perimeterPath = remember { Path() }
+    val trailPath = remember { Path() }
+    val pathMeasure = remember { PathMeasure() }
+
+    LaunchedEffect(event.id) {
+        progressAnim.snapTo(0f)
+        progressAnim.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 2200, easing = LinearEasing),
+        )
+        delay(40)
+        currentOnFinished(event.id)
+    }
+
+    val t = progressAnim.value
+    if (t >= 1f) return
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val startRect = event.originRect ?: fallbackRectFor(event.bucket, size, density.density)
+        val liveTargetRect = liveRectProvider() ?: startRect
+
+        val insetX = 14.dp.toPx()
+        val insetTop = maxOf(14.dp.toPx(), statusTopPx * 0.48f)
+        val insetBottom = maxOf(14.dp.toPx(), navBottomPx * 0.48f)
+        val leftX = insetX
+        val rightX = (size.width - insetX).coerceAtLeast(leftX + 48.dp.toPx())
+        val topY = insetTop
+        val bottomY = (size.height - insetBottom).coerceAtLeast(topY + 48.dp.toPx())
+        val cornerR = 22.dp.toPx().coerceAtMost(minOf(rightX - leftX, bottomY - topY) * 0.25f)
+        val entryX = startRect.center.x.coerceIn(leftX + cornerR + 4f, rightX - cornerR - 4f)
+        val entryPoint = Offset(entryX, topY)
+
+        perimeterPath.reset()
+        perimeterPath.moveTo(entryX, topY)
+        perimeterPath.lineTo(rightX - cornerR, topY)
+        perimeterPath.quadraticTo(rightX, topY, rightX, topY + cornerR)
+        perimeterPath.lineTo(rightX, bottomY - cornerR)
+        perimeterPath.quadraticTo(rightX, bottomY, rightX - cornerR, bottomY)
+        perimeterPath.lineTo(leftX + cornerR, bottomY)
+        perimeterPath.quadraticTo(leftX, bottomY, leftX, bottomY - cornerR)
+        perimeterPath.lineTo(leftX, topY + cornerR)
+        perimeterPath.quadraticTo(leftX, topY, leftX + cornerR, topY)
+        perimeterPath.lineTo(entryX, topY)
+        pathMeasure.setPath(perimeterPath, forceClosed = false)
+        val totalPerimeterLen = pathMeasure.length.coerceAtLeast(1f)
+
+        val flyLength = startRect.width.coerceIn(64.dp.toPx(), 108.dp.toPx())
+        val flyThickness = 8.dp.toPx()
+        val igniteThickness = 8.dp.toPx()
+
+        val cx: Float
+        val cy: Float
+        val barW: Float
+        val barH: Float
+        val rotationDeg: Float
+
+        when {
+            t < 0.10f -> {
+                val p = FastOutSlowInEasing.transform((t / 0.10f).coerceIn(0f, 1f))
+                cx = startRect.center.x
+                cy = startRect.center.y
+                barW = startRect.width
+                barH = lerpFloat(startRect.height, igniteThickness, p)
+                rotationDeg = 0f
+            }
+            t < 0.22f -> {
+                val p = FastOutSlowInEasing.transform(((t - 0.10f) / 0.12f).coerceIn(0f, 1f))
+                cx = lerpFloat(startRect.center.x, entryPoint.x, p)
+                cy = lerpFloat(startRect.center.y, entryPoint.y, p)
+                barW = lerpFloat(startRect.width, flyLength, p)
+                barH = lerpFloat(igniteThickness, flyThickness, p)
+                rotationDeg = 360f * p
+            }
+            t < 0.84f -> {
+                val lapEase = CubicBezierEasing(0.32f, 0f, 0.22f, 1f)
+                val p = lapEase.transform(((t - 0.22f) / 0.62f).coerceIn(0f, 1f))
+                val s = (p * totalPerimeterLen).coerceIn(0f, totalPerimeterLen)
+                val pos = pathMeasure.getPosition(s)
+                cx = pos.x
+                cy = pos.y
+                barW = flyLength
+                barH = flyThickness
+                rotationDeg = 360f + 1440f * p
+            }
+            t < 0.96f -> {
+                val p = FastOutSlowInEasing.transform(((t - 0.84f) / 0.12f).coerceIn(0f, 1f))
+                cx = lerpFloat(entryPoint.x, liveTargetRect.center.x, p)
+                cy = lerpFloat(entryPoint.y, liveTargetRect.center.y, p)
+                barW = lerpFloat(flyLength, liveTargetRect.width, p)
+                barH = lerpFloat(flyThickness, liveTargetRect.height, p)
+                rotationDeg = 1800f + 360f * p
+            }
+            else -> {
+                cx = liveTargetRect.center.x
+                cy = liveTargetRect.center.y
+                barW = liveTargetRect.width
+                barH = liveTargetRect.height
+                rotationDeg = 0f
+            }
+        }
+
+        val phase = (t * 4.2f) % 1f
+        val settleT = if (t >= 0.96f) ((t - 0.96f) / 0.04f).coerceIn(0f, 1f) else 0f
+        val rainbowWeight = 1f - settleT
+
+        val c0 = lerp(sampleRainbowColor(phase), ConsistencyEmerald, settleT)
+        val c1 = lerp(sampleRainbowColor(phase + 0.25f), ConsistencyEmerald, settleT)
+        val c2 = lerp(sampleRainbowColor(phase + 0.50f), ConsistencyEmerald, settleT)
+        val c3 = lerp(sampleRainbowColor(phase + 0.75f), ConsistencyEmerald, settleT)
+
+        if (t in 0.22f..0.90f) {
+            val lapEase = CubicBezierEasing(0.32f, 0f, 0.22f, 1f)
+            val lapP = if (t < 0.84f) {
+                lapEase.transform(((t - 0.22f) / 0.62f).coerceIn(0f, 1f))
+            } else {
+                1f
+            }
+            val trailFade = if (t < 0.84f) 1f else (1f - ((t - 0.84f) / 0.06f).coerceIn(0f, 1f))
+            val s = (lapP * totalPerimeterLen).coerceIn(0f, totalPerimeterLen)
+            val trailLen = totalPerimeterLen * 0.22f
+            val trailStart = (s - trailLen).coerceAtLeast(0f)
+            if (s - trailStart > 2f && trailFade > 0.01f) {
+                trailPath.reset()
+                if (pathMeasure.getSegment(trailStart, s, trailPath, true)) {
+                    val trailBrush = Brush.linearGradient(
+                        colors = listOf(
+                            c0.copy(alpha = 0f),
+                            c1.copy(alpha = 0.45f * trailFade),
+                            c2.copy(alpha = 0.75f * trailFade),
+                            c3.copy(alpha = 0.90f * trailFade),
+                        ),
+                        start = pathMeasure.getPosition(trailStart),
+                        end = pathMeasure.getPosition(s),
+                    )
+                    drawPath(
+                        path = trailPath,
+                        brush = trailBrush,
+                        style = Stroke(
+                            width = 4.5.dp.toPx(),
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round,
+                        ),
+                    )
+                }
+            }
+        }
+
+        withTransform({
+            translate(left = cx, top = cy)
+            rotate(degrees = rotationDeg, pivot = Offset.Zero)
+        }) {
+            val safeW = barW.coerceAtLeast(4f)
+            val safeH = barH.coerceAtLeast(2f)
+            val barBrush = Brush.linearGradient(
+                colors = listOf(c0, c1, c2, c3),
+                start = Offset(-safeW / 2f, 0f),
+                end = Offset(safeW / 2f, 0f),
+            )
+
+            if (rainbowWeight > 0.01f) {
+                val haloPad = 3.5.dp.toPx()
+                val haloBrush = Brush.linearGradient(
+                    colors = listOf(
+                        c0.copy(alpha = 0.34f * rainbowWeight),
+                        c1.copy(alpha = 0.34f * rainbowWeight),
+                        c2.copy(alpha = 0.34f * rainbowWeight),
+                        c3.copy(alpha = 0.34f * rainbowWeight),
+                    ),
+                    start = Offset(-safeW / 2f, 0f),
+                    end = Offset(safeW / 2f, 0f),
+                )
+                drawRoundRect(
+                    brush = haloBrush,
+                    topLeft = Offset(-safeW / 2f - haloPad, -safeH / 2f - haloPad),
+                    size = Size(safeW + haloPad * 2f, safeH + haloPad * 2f),
+                    cornerRadius = CornerRadius((safeH + haloPad * 2f) / 2f),
+                )
+            }
+
+            drawRoundRect(
+                brush = barBrush,
+                topLeft = Offset(-safeW / 2f, -safeH / 2f),
+                size = Size(safeW, safeH),
+                cornerRadius = CornerRadius(safeH / 2f),
+            )
+
+            if (rainbowWeight > 0.05f) {
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.32f * rainbowWeight),
+                    topLeft = Offset(-safeW / 2f + safeH * 0.25f, -safeH / 2f + 1.dp.toPx()),
+                    size = Size((safeW - safeH * 0.5f).coerceAtLeast(2f), (safeH * 0.28f).coerceAtLeast(1f)),
+                    cornerRadius = CornerRadius(safeH / 4f),
                 )
             }
         }
