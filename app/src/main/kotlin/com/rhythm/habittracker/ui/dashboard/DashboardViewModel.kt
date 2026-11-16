@@ -155,7 +155,17 @@ class DashboardViewModel(
         viewModelScope.launch {
             val habit = repository.getHabitById(habitId) ?: return@launch
             if (date in habit.rescheduledFromDates) return@launch
+            val completedBefore = repository.getCompletedInstancesOn(habitId, date)
+            val wasCompleted = instanceIndex in completedBefore
             repository.toggleCompletion(habitId, date, instanceIndex)
+            if (!wasCompleted) {
+                val completedAfterCount = completedBefore.size + 1
+                reminderScheduler?.dismissHabitNotification(
+                    habitId = habitId,
+                    instanceIndex = instanceIndex,
+                    clearAllForHabit = completedAfterCount >= habit.dailyTargetCount,
+                )
+            }
         }
     }
 
@@ -165,6 +175,7 @@ class DashboardViewModel(
             if (outcome != null) {
                 undoTokenFlow.value = outcome.undoToken
                 reminderScheduler?.scheduleHabitReminders(outcome.updatedHabit)
+                reminderScheduler?.dismissHabitNotification(habitId = habitId, clearAllForHabit = true)
             }
         }
     }

@@ -61,7 +61,16 @@ class UpcomingTasksWidgetProvider : AppWidgetProvider() {
                         val today = LocalDate.now()
                         val habit = repo.getHabitById(habitId)
                         if (habit != null && today !in habit.rescheduledFromDates) {
+                            val completedBefore = repo.getCompletedInstancesOn(habitId, today)
+                            val wasCompleted = instanceIndex in completedBefore
                             repo.toggleCompletion(habitId, today, instanceIndex)
+                            if (!wasCompleted) {
+                                app.container.reminderScheduler.dismissHabitNotification(
+                                    habitId = habitId,
+                                    instanceIndex = instanceIndex,
+                                    clearAllForHabit = (completedBefore.size + 1) >= habit.dailyTargetCount,
+                                )
+                            }
                         }
                     }
                     RhythmWidgetUpdater.updateAllWidgets(context)

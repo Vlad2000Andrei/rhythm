@@ -16,7 +16,7 @@ app/src/main/kotlin/com/rhythm/habittracker/
 ├── MainActivity.kt                  # Edge-to-edge ComponentActivity hosting RhythmTheme + MainNavigation & EXTRA_OPEN_HABIT_ID deep-links
 ├── Navigation.kt                    # Navigation 3 NavDisplay with ViewModel-scoped entryDecorators & deep-link LaunchedEffect
 ├── NavigationKeys.kt                # @Serializable NavKey routes (DashboardRoute, AllHabitsRoute, HabitDetailRoute, AddEditHabitRoute)
-├── RhythmApplication.kt             # Application class, manual DI container (AppContainer) & reactive widget auto-refresh observer
+├── RhythmApplication.kt             # Application class, manual DI container (AppContainer), widget auto-refresh & completion notification auto-dismissal observer
 ├── data/
 │   ├── HabitRepository.kt           # HabitRepository interface + Mutex-serialized RoomHabitRepository (incl. RescheduleOutcome/UndoToken)
 │   └── local/
@@ -150,6 +150,7 @@ sequenceDiagram
     participant VM as DashboardViewModel
     participant Repo as RoomHabitRepository
     participant DAO as HabitDao (Room)
+    participant Sched as AlarmHabitReminderScheduler
 
     User->>UI: Tap habit instance checkbox
     alt Checking an uncompleted task
@@ -164,6 +165,7 @@ sequenceDiagram
         Repo->>DAO: deleteCompletionInstance(habitId, epochDay, instanceIndex)
     else Instance not yet completed on date (and date not in rescheduledFromDates)
         Repo->>DAO: insertCompletion(HabitCompletionEntity(habitId, epochDay, instanceIndex))
+        VM->>Sched: dismissHabitNotification(habitId, instanceIndex, clearAllForHabit)
     end
     DAO-->>Repo: Emits updated Flow<List<HabitCompletionEntity>>
     Repo-->>VM: Emits updated Map<LocalDate, Map<Long, Set<Int>>>

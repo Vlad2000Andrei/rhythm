@@ -1,9 +1,11 @@
 package com.rhythm.habittracker.reminders
 
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import androidx.core.app.NotificationManagerCompat
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import java.time.LocalDate
@@ -13,6 +15,11 @@ import java.time.ZoneId
 interface ReminderScheduler {
     fun scheduleHabitReminders(habit: Habit)
     fun cancelHabitReminders(habit: Habit)
+    fun dismissHabitNotification(
+        habitId: Long,
+        instanceIndex: Int? = null,
+        clearAllForHabit: Boolean = false,
+    ) = Unit
 }
 
 class AlarmHabitReminderScheduler(
@@ -40,10 +47,45 @@ class AlarmHabitReminderScheduler(
     }
 
     override fun cancelHabitReminders(habit: Habit) {
-        val manager = alarmManager ?: return
-        habit.targetTimes.forEachIndexed { index, slot ->
-            val pendingIntent = buildPendingIntent(habit.id, slot.id, index, habit.title)
-            manager.cancel(pendingIntent)
+        alarmManager?.let { manager ->
+            habit.targetTimes.forEachIndexed { index, slot ->
+                val pendingIntent = buildPendingIntent(habit.id, slot.id, index, habit.title)
+                manager.cancel(pendingIntent)
+            }
+        }
+        dismissHabitNotification(habit.id, clearAllForHabit = true)
+    }
+
+    override fun dismissHabitNotification(
+        habitId: Long,
+        instanceIndex: Int?,
+        clearAllForHabit: Boolean,
+    ) {
+        if (habitId <= 0L) return
+        val compatManager = NotificationManagerCompat.from(context)
+        compatManager.cancel(habitId.toInt())
+
+        if (instanceIndex != null) {
+            compatManager.cancel(notificationIdFor(habitId, instanceIndex))
+        }
+
+        if (clearAllForHabit || instanceIndex == null) {
+            for (slotIdx in 0..MAX_REMINDER_SLOTS) {
+                compatManager.cancel(notificationIdFor(habitId, slotIdx))
+            }
+        }
+
+        val systemManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        systemManager?.activeNotifications?.forEach { statusBarNotification ->
+            val extras = statusBarNotification.notification.extras
+            val matchesHabitId = extras?.getLong(EXTRA_HABIT_ID, -1L) == habitId
+            val matchesLegacyId = statusBarNotification.id == habitId.toInt()
+            val matchesSlot = clearAllForHabit ||
+                instanceIndex == null ||
+                extras?.getInt(EXTRA_SLOT_INDEX, -1) == instanceIndex
+            if (matchesLegacyId || (matchesHabitId && matchesSlot)) {
+                compatManager.cancel(statusBarNotification.tag, statusBarNotification.id)
+            }
         }
     }
 
@@ -84,5 +126,9 @@ class AlarmHabitReminderScheduler(
         const val EXTRA_SLOT_ID = "extra_slot_id"
         const val EXTRA_SLOT_INDEX = "extra_slot_index"
         const val EXTRA_HABIT_TITLE = "extra_habit_title"
+        private const val MAX_REMINDER_SLOTS = 20
+
+        fun notificationIdFor(habitId: Long, slotIndex: Int = 0): Int =
+            if (slotIndex <= 0) habitId.toInt() else ((habitId * 100L) + slotIndex).toInt()
     }
 }

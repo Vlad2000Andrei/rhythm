@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -46,7 +47,7 @@ class HabitReminderReceiver : BroadcastReceiver() {
                     completedInstances.size >= habit.dailyTargetCount
 
                 if (isScheduledToday && !(habit.skipReminderIfCompleted && isCompletedToday)) {
-                    showNotification(context, habit.id, habit.title, habit.description)
+                    showNotification(context, habit.id, slotIndex, habit.title, habit.description)
                 }
 
                 // Schedule next day's reminder slot
@@ -60,6 +61,7 @@ class HabitReminderReceiver : BroadcastReceiver() {
     private fun showNotification(
         context: Context,
         habitId: Long,
+        slotIndex: Int,
         title: String,
         description: String,
     ) {
@@ -83,16 +85,21 @@ class HabitReminderReceiver : BroadcastReceiver() {
         }
         manager.createNotificationChannel(channel)
 
+        val notificationId = AlarmHabitReminderScheduler.notificationIdFor(habitId, slotIndex)
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val contentIntent = PendingIntent.getActivity(
             context,
-            habitId.toInt(),
+            notificationId,
             tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val extras = Bundle().apply {
+            putLong(AlarmHabitReminderScheduler.EXTRA_HABIT_ID, habitId)
+            putInt(AlarmHabitReminderScheduler.EXTRA_SLOT_INDEX, slotIndex)
+        }
         val bodyText = description.ifBlank { "Scheduled session cue" }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -101,9 +108,10 @@ class HabitReminderReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
+            .addExtras(extras)
             .build()
 
-        NotificationManagerCompat.from(context).notify(habitId.toInt(), notification)
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
     }
 
     companion object {

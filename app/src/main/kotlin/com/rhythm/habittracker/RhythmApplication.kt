@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 class AppContainer(context: Context) {
     private val database: HabitDatabase by lazy { HabitDatabase.getInstance(context) }
@@ -49,6 +50,20 @@ class RhythmApplication : Application() {
             ) { habits, completedInstancesByDate ->
                 habits to completedInstancesByDate
             }.collect { (habits, completedInstancesByDate) ->
+                val todayCompleted = completedInstancesByDate[LocalDate.now()].orEmpty()
+                habits.forEach { habit ->
+                    val completedInstances = todayCompleted[habit.id].orEmpty()
+                    if (completedInstances.isNotEmpty()) {
+                        val allDone = completedInstances.size >= habit.dailyTargetCount
+                        completedInstances.forEach { instanceIndex ->
+                            container.reminderScheduler.dismissHabitNotification(
+                                habitId = habit.id,
+                                instanceIndex = instanceIndex,
+                                clearAllForHabit = allDone,
+                            )
+                        }
+                    }
+                }
                 RhythmWidgetUpdater.updateAllWidgetsWithSnapshot(
                     context = this@RhythmApplication,
                     habits = habits,

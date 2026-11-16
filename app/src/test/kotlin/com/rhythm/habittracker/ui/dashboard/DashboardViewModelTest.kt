@@ -11,6 +11,7 @@ import com.rhythm.habittracker.domain.model.HabitAccentColor
 import com.rhythm.habittracker.domain.model.HabitSortMode
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import com.rhythm.habittracker.domain.model.TimeOfDayBucket
+import com.rhythm.habittracker.reminders.ReminderScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -532,8 +533,86 @@ class DashboardViewModelTest {
         )
     }
 
+    @Test
+    fun dashboard_completingTaskDismissesTaskNotification() = runTest {
+        val today = LocalDate.of(2026, 5, 15)
+        val multiHabit = Habit(
+            id = 51L,
+            title = "Hydrate",
+            domain = "Health",
+            targetPerPeriod = 2,
+            targetTimes = listOf(
+                TargetTimeSlot("h1", 8, 0, true),
+                TargetTimeSlot("h2", 20, 0, true),
+            ),
+            createdAtEpochDay = today.minusDays(2).toEpochDay(),
+        )
+        val fakeRepo = FakeDashboardRepository(
+            initialHabits = listOf(multiHabit),
+            initialCompletions = emptyMap(),
+        )
+        val fakeScheduler = FakeReminderScheduler()
+        val viewModel = DashboardViewModel(
+            repository = fakeRepo,
+            reminderScheduler = fakeScheduler,
+            clockTodayProvider = { today },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        viewModel.toggleHabitCompletion(habitId = 51L, instanceIndex = 0, date = today)
+        advanceUntilIdle()
+        assertEquals(
+            listOf(DismissCall(habitId = 51L, instanceIndex = 0, clearAllForHabit = false)),
+            fakeScheduler.dismissCalls,
+        )
+
+        viewModel.toggleHabitCompletion(habitId = 51L, instanceIndex = 1, date = today)
+        advanceUntilIdle()
+        assertEquals(
+            listOf(
+                DismissCall(habitId = 51L, instanceIndex = 0, clearAllForHabit = false),
+                DismissCall(habitId = 51L, instanceIndex = 1, clearAllForHabit = true),
+            ),
+            fakeScheduler.dismissCalls,
+        )
+
+        // Unchecking a completed task should not dismiss again.
+        viewModel.toggleHabitCompletion(habitId = 51L, instanceIndex = 1, date = today)
+        advanceUntilIdle()
+        assertEquals(2, fakeScheduler.dismissCalls.size)
+    }
+
     private fun DashboardUiState.StreakForHabit(habitId: Long): Int =
         (pendingHabits + completedHabits).first { it.habit.id == habitId }.streakDays
+}
+
+private data class DismissCall(
+    val habitId: Long,
+    val instanceIndex: Int?,
+    val clearAllForHabit: Boolean,
+)
+
+private class FakeReminderScheduler : ReminderScheduler {
+    val dismissCalls = mutableListOf<DismissCall>()
+
+    override fun scheduleHabitReminders(habit: Habit) = Unit
+
+    override fun cancelHabitReminders(habit: Habit) = Unit
+
+    override fun dismissHabitNotification(
+        habitId: Long,
+        instanceIndex: Int?,
+        clearAllForHabit: Boolean,
+    ) {
+        dismissCalls += DismissCall(
+            habitId = habitId,
+            instanceIndex = instanceIndex,
+            clearAllForHabit = clearAllForHabit,
+        )
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

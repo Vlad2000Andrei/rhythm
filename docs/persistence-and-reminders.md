@@ -127,6 +127,7 @@ sequenceDiagram
 
 ### Key Behaviors
 - **Per-Instance Smart Suppression**: If `habit.skipReminderIfCompleted` is enabled and the user has already checked off that reminder slot's instance (or all daily instances of the habit) today, `HabitReminderReceiver` silently suppresses the notification and reschedules the alarm for the next day.
+- **Automatic Notification Dismissal on Completion**: Completing a habit instance (via `DashboardViewModel.toggleHabitCompletion`, the interactive Home Screen `UpcomingTasksWidgetProvider`, or reactively in `RhythmApplication`) automatically dismisses active status-bar notifications for that task via `ReminderScheduler.dismissHabitNotification` (canceling by per-slot/legacy notification IDs as well as active notifications carrying `EXTRA_HABIT_ID` and `EXTRA_SLOT_INDEX` extras). Rescheduling off the day or deleting a habit likewise clears all active notifications for that habit.
 - **Android 13+ (`API 33+`) Runtime Permission**: `AddEditHabitScreen` requests `android.permission.POST_NOTIFICATIONS` via `ActivityResultContracts.RequestPermission()` when enabling a time-slot cue or committing a habit with active reminders.
 
 ---
