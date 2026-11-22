@@ -483,7 +483,7 @@ private fun AllHabitCard(
     modifier: Modifier = Modifier,
 ) {
     val accent = item.habit.accentColor.color
-    val headerLabel = item.habit.badgeLabel.ifBlank { item.habit.cadenceType.label }
+    val headerLabel = item.habit.badgeLabel.ifBlank { item.habit.latestSchedule.cadenceType.label }
         .uppercase(Locale.ENGLISH)
 
     Surface(
@@ -560,6 +560,25 @@ private fun AllHabitCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+
+                if (item.pauseStatusLabel != null) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = if (item.isPausedToday) {
+                            Color(0xFFD97706).copy(alpha = 0.14f)
+                        } else {
+                            RhythmSurfaceContainerLow
+                        },
+                    ) {
+                        Text(
+                            text = item.pauseStatusLabel,
+                            style = RhythmTheme.tokens.labelSm,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (item.isPausedToday) Color(0xFFD97706) else RhythmOnSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                        )
+                    }
+                }
 
                 if (item.habit.description.isNotBlank()) {
                     val trimmedQuote = item.habit.description.trim('"', '\u201C', '\u201D', ' ')
@@ -715,7 +734,7 @@ fun AllHabitsScreenPreview() {
                 ),
                 filteredHabits = listOf(
                     AllHabitListItem(
-                        habit = Habit(
+                        habit = Habit.singleSchedule(
                             id = 1L,
                             title = "Deep Work",
                             description = "After brewing double-shot, terminal is open, phone locked in drawer.",
@@ -729,7 +748,7 @@ fun AllHabitsScreenPreview() {
                         scheduleSummary = "DAILY · 08:30 AM",
                     ),
                     AllHabitListItem(
-                        habit = Habit(
+                        habit = Habit.singleSchedule(
                             id = 2L,
                             title = "Tempo Run",
                             description = "Shoes set at doorway the prior evening. Target zone: 4:45/km.",
@@ -744,7 +763,7 @@ fun AllHabitsScreenPreview() {
                         scheduleSummary = "WEEKLY · MON, WED, FRI · 07:00 AM",
                     ),
                     AllHabitListItem(
-                        habit = Habit(
+                        habit = Habit.singleSchedule(
                             id = 3L,
                             title = "Read Literature",
                             description = "Kindle or paper copy only. No back-lit screens post 21:30.",

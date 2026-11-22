@@ -134,6 +134,7 @@ fun MainNavigation(
             factory = HabitDetailViewModel.Factory(
               habitId = route.habitId,
               repository = container.habitRepository,
+              reminderScheduler = container.reminderScheduler,
             ),
           )
           HabitDetailScreen(

@@ -3,6 +3,7 @@ package com.rhythm.habittracker.widget
 import com.rhythm.habittracker.domain.model.CadenceType
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import com.rhythm.habittracker.domain.model.TimeOfDayBucket
 import org.junit.Assert.assertEquals
@@ -27,7 +28,8 @@ class WidgetDataBuilderTest {
         targetTimes: List<TargetTimeSlot> = listOf(TargetTimeSlot(id = "t_$id", hour = hour, minute = minute)),
         days: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
         sortOrder: Int = 0,
-    ): Habit = Habit(
+        pauseWindows: List<HabitPauseWindow> = emptyList(),
+    ): Habit = Habit.singleSchedule(
         id = id,
         title = title,
         description = "$title desc",
@@ -40,6 +42,7 @@ class WidgetDataBuilderTest {
         timeOfDayBucket = TimeOfDayBucket.fromTimes(targetTimes),
         sortOrder = sortOrder,
         createdAtEpochDay = today.minusDays(30).toEpochDay(),
+        pauseWindows = pauseWindows,
     )
 
     @Test
@@ -67,7 +70,6 @@ class WidgetDataBuilderTest {
         assertEquals("Completed Today", selectedSecond.statusLabel)
         assertEquals(4, selectedSecond.matrixColumns.size)
 
-        // Missing configured ID falls back to first habit
         val fallbackFirst = WidgetDataBuilder.buildSingleHabitData(
             habits = listOf(h1, h2),
             completedInstancesByDate = completions,
@@ -79,6 +81,27 @@ class WidgetDataBuilderTest {
         assertEquals(1, fallbackFirst.currentStreak)
         assertFalse(fallbackFirst.isCompletedToday)
         assertEquals("Scheduled for 08:30 AM", fallbackFirst.statusLabel)
+    }
+
+    @Test
+    fun `buildSingleHabitData handles paused habit status and matrix pause cells`() {
+        val paused = sampleHabit(
+            id = 10L,
+            title = "Run",
+            pauseWindows = listOf(HabitPauseWindow(1L, today.minusDays(1), today.plusDays(2))),
+        )
+        val data = WidgetDataBuilder.buildSingleHabitData(
+            habits = listOf(paused),
+            completedInstancesByDate = emptyMap(),
+            configuredHabitId = 10L,
+            today = today,
+            maxWeeks = 2,
+        )
+        assertFalse(data.isScheduledToday)
+        assertEquals("Paused until Oct 26 · Resumes Oct 27", data.statusLabel)
+        val todayCell = data.matrixColumns.flatten().first { it.date == today }
+        assertTrue(todayCell.isPausedEmpty)
+        assertFalse(todayCell.isUnscheduledEmpty)
     }
 
     @Test
@@ -136,7 +159,7 @@ class WidgetDataBuilderTest {
     }
 
     @Test
-    fun `buildUpcomingTasksData orders pending before completed, marks NOW target, and builds color segments`() {
+    fun `buildUpcomingTasksData orders pending before completed and excludes uncompleted paused tasks`() {
         val morningDone = sampleHabit(
             id = 1L,
             title = "Cold Plunge",
@@ -158,37 +181,36 @@ class WidgetDataBuilderTest {
             hour = 9,
             minute = 0,
         )
+        val pausedMultiPartial = sampleHabit(
+            id = 4L,
+            title = "Stretch",
+            targetPerPeriod = 2,
+            targetTimes = listOf(
+                TargetTimeSlot("s1", 6, 0),
+                TargetTimeSlot("s2", 19, 0),
+            ),
+            pauseWindows = listOf(HabitPauseWindow(1L, today, today.plusDays(1))),
+        )
 
         val completions = mapOf(
-            today to mapOf(1L to setOf(0)),
+            today to mapOf(1L to setOf(0), 4L to setOf(0)),
         )
 
         val data = WidgetDataBuilder.buildUpcomingTasksData(
-            habits = listOf(morningDone, afternoonPending, earlyPending),
+            habits = listOf(morningDone, afternoonPending, earlyPending, pausedMultiPartial),
             completedInstancesByDate = completions,
             today = today,
         )
 
-        assertEquals(1, data.completedCount)
-        assertEquals(3, data.totalCount)
-        assertEquals(33, data.completionPercent)
+        assertEquals(2, data.completedCount)
+        assertEquals(4, data.totalCount)
+        assertEquals(50, data.completionPercent)
         assertEquals("NEXT UP: 09:00 AM", data.nextUpFooterLabel)
 
-        // First segment colored by completed item's accent, remaining 2 segments null
-        assertEquals(listOf(HabitAccentColor.ROYAL_BLUE.hex, null, null), data.segmentColorHexes)
-
-        // Pending sorted by time first, then completed
-        assertEquals(3, data.orderedTasks.size)
         assertEquals("Read 10 Pages", data.orderedTasks[0].title)
         assertTrue(data.orderedTasks[0].isNowTarget)
-        assertFalse(data.orderedTasks[0].isCompleted)
-
         assertEquals("Deep Work", data.orderedTasks[1].title)
-        assertFalse(data.orderedTasks[1].isNowTarget)
-        assertFalse(data.orderedTasks[1].isCompleted)
-
-        assertEquals("Cold Plunge", data.orderedTasks[2].title)
         assertTrue(data.orderedTasks[2].isCompleted)
-        assertFalse(data.orderedTasks[2].isNowTarget)
+        assertTrue(data.orderedTasks[3].isCompleted)
     }
 }

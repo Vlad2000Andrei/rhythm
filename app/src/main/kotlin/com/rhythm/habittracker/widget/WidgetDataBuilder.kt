@@ -19,6 +19,7 @@ object WidgetDataBuilder {
         val isCompleted: Boolean,
         val timeSlot: TargetTimeSlot?,
         val bucket: TimeOfDayBucket,
+        val cadenceLabelUpper: String,
     )
 
     fun buildSingleHabitData(
@@ -41,7 +42,8 @@ object WidgetDataBuilder {
         val fullyCompletedDates = buildSet<LocalDate> {
             completedInstancesByDate.forEach { (date, habitMap) ->
                 val instances = habitMap[habit.id].orEmpty()
-                if (instances.size >= habit.dailyTargetCount) {
+                val target = habit.scheduleForDate(date).dailyTargetCount
+                if (instances.size >= target) {
                     add(date)
                 }
             }
@@ -64,22 +66,25 @@ object WidgetDataBuilder {
             completedInstancesByDate = completedInstancesByDate,
         )
 
-        val primaryTargetLabel = habit.targetTimes
+        val todaySchedule = habit.scheduleForDate(today)
+        val latestSchedule = habit.latestSchedule
+        val primaryTargetLabel = todaySchedule.targetTimes
             .minByOrNull { it.minuteOfDay }
             ?.formatted()
             ?: "08:00 AM"
 
         val subtitleLabel = habit.description.ifBlank {
-            CadenceEvaluator.formatHabitScheduleSummary(habit)
+            CadenceEvaluator.formatHabitScheduleSummary(latestSchedule)
         }
 
         val domainBadgeLabel = habit.badgeLabel
             .uppercase(Locale.ENGLISH)
-            .ifBlank { habit.cadenceType.label.uppercase(Locale.ENGLISH) }
+            .ifBlank { latestSchedule.cadenceType.label.uppercase(Locale.ENGLISH) }
 
         val isScheduledToday = CadenceEvaluator.isHabitScheduledOn(habit, today)
         val completedTodayCount = completedInstancesByDate[today]?.get(habit.id).orEmpty().size
-        val isCompletedToday = completedTodayCount >= habit.dailyTargetCount
+        val isCompletedToday = completedTodayCount >= todaySchedule.dailyTargetCount
+        val activePause = habit.activePause(today)
 
         val consistencyPercent = if (matrix.columns.flatten().any { !it.isFuture && it.isScheduled }) {
             matrix.consistencyPercent
@@ -89,10 +94,13 @@ object WidgetDataBuilder {
             0
         }
 
+        val pauseFmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
         val statusLabel = when {
             isCompletedToday -> "Completed Today"
-            isScheduledToday && habit.dailyTargetCount > 1 ->
-                "Progress $completedTodayCount/${habit.dailyTargetCount} · Next $primaryTargetLabel"
+            activePause != null ->
+                "Paused until ${activePause.endDate.format(pauseFmt)} · Resumes ${activePause.resumesOnDate.format(pauseFmt)}"
+            isScheduledToday && todaySchedule.dailyTargetCount > 1 ->
+                "Progress $completedTodayCount/${todaySchedule.dailyTargetCount} · Next $primaryTargetLabel"
             isScheduledToday -> "Scheduled for $primaryTargetLabel"
             else -> "Rest day · Next due at $primaryTargetLabel"
         }
@@ -155,6 +163,7 @@ object WidgetDataBuilder {
                 "$timeText · $titleText"
             }
             dueInstances.isNotEmpty() -> "ALL ${dueInstances.size} COMPLETED TODAY"
+            habits.all { it.isPausedOn(today) } -> "ALL HABITS PAUSED TODAY"
             else -> "REST DAY · NO TASKS SCHEDULED"
         }
 
@@ -220,6 +229,7 @@ object WidgetDataBuilder {
             habits.isEmpty() -> "TAP TO ADD FIRST HABIT"
             pendingItems.isNotEmpty() -> "NEXT UP: ${pendingItems.first().timeShortLabel}"
             totalCount > 0 -> "ALL TASKS DONE"
+            habits.all { it.isPausedOn(today) } -> "ALL HABITS PAUSED"
             else -> "REST DAY ALIGNED"
         }
 
@@ -245,7 +255,7 @@ object WidgetDataBuilder {
         val fullyCompletedByHabit: Map<Long, Set<LocalDate>> = buildMap<Long, MutableSet<LocalDate>> {
             completedInstancesByDate.forEach { (d, habitMap) ->
                 habitMap.forEach { (id, instances) ->
-                    val target = habitById[id]?.dailyTargetCount ?: 1
+                    val target = habitById[id]?.scheduleForDate(d)?.dailyTargetCount ?: 1
                     if (instances.size >= target) {
                         getOrPut(id) { mutableSetOf() }.add(d)
                     }
@@ -266,20 +276,42 @@ object WidgetDataBuilder {
         }
 
         return dueHabits.flatMap { habit ->
+            val dateSchedule = habit.scheduleForDate(date)
+            val cadenceUpper = dateSchedule.cadenceType.label.uppercase(Locale.ENGLISH)
             val completedInstances = completedOnDate[habit.id].orEmpty()
-            val totalInstances = maxOf(
-                habit.dailyTargetCount,
-                (completedInstances.maxOrNull() ?: -1) + 1,
-            )
-            (0 until totalInstances).map { idx ->
-                DueInstance(
-                    habit = habit,
-                    instanceIndex = idx,
-                    totalInstances = totalInstances,
-                    isCompleted = idx in completedInstances,
-                    timeSlot = habit.timeSlotForInstance(idx),
-                    bucket = habit.bucketForInstance(idx),
+            if (habit.isPausedOn(date) && completedInstances.isNotEmpty()) {
+                val sortedCompleted = completedInstances.sorted()
+                val totalInstances = maxOf(
+                    dateSchedule.dailyTargetCount,
+                    (sortedCompleted.maxOrNull() ?: -1) + 1,
                 )
+                sortedCompleted.map { idx ->
+                    DueInstance(
+                        habit = habit,
+                        instanceIndex = idx,
+                        totalInstances = totalInstances,
+                        isCompleted = true,
+                        timeSlot = dateSchedule.timeSlotForInstance(idx),
+                        bucket = dateSchedule.bucketForInstance(idx),
+                        cadenceLabelUpper = cadenceUpper,
+                    )
+                }
+            } else {
+                val totalInstances = maxOf(
+                    dateSchedule.dailyTargetCount,
+                    (completedInstances.maxOrNull() ?: -1) + 1,
+                )
+                (0 until totalInstances).map { idx ->
+                    DueInstance(
+                        habit = habit,
+                        instanceIndex = idx,
+                        totalInstances = totalInstances,
+                        isCompleted = idx in completedInstances,
+                        timeSlot = dateSchedule.timeSlotForInstance(idx),
+                        bucket = dateSchedule.bucketForInstance(idx),
+                        cadenceLabelUpper = cadenceUpper,
+                    )
+                }
             }
         }
     }
@@ -298,7 +330,7 @@ object WidgetDataBuilder {
             habit.domain.isNotBlank() ->
                 "$timeText · ${habit.domain.uppercase(Locale.ENGLISH)}"
             else ->
-                "$timeText · ${habit.cadenceType.label.uppercase(Locale.ENGLISH)}"
+                "$timeText · $cadenceLabelUpper"
         }
 
         return WidgetTaskItem(

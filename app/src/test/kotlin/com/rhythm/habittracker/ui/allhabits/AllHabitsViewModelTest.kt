@@ -4,6 +4,7 @@ import com.rhythm.habittracker.data.HabitRepository
 import com.rhythm.habittracker.domain.model.CadenceType
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -38,7 +40,7 @@ class AllHabitsViewModelTest {
         val today = LocalDate.of(2026, 5, 15)
         val repo = FakeAllHabitsRepository(
             habits = listOf(
-                Habit(
+                Habit.singleSchedule(
                     id = 1L,
                     title = "Deep Work",
                     description = "Double-shot espresso, terminal open.",
@@ -49,7 +51,7 @@ class AllHabitsViewModelTest {
                     sortOrder = 0,
                     createdAtEpochDay = today.minusDays(10).toEpochDay(),
                 ),
-                Habit(
+                Habit.singleSchedule(
                     id = 2L,
                     title = "Read Literature",
                     description = "Paper copy before sleep.",
@@ -60,7 +62,7 @@ class AllHabitsViewModelTest {
                     sortOrder = 1,
                     createdAtEpochDay = today.minusDays(10).toEpochDay(),
                 ),
-                Habit(
+                Habit.singleSchedule(
                     id = 3L,
                     title = "Evening Reflection",
                     domain = "Mind",
@@ -90,7 +92,6 @@ class AllHabitsViewModelTest {
         val state = viewModel.uiState.value
         assertFalse(state.isLoading)
         assertEquals(3, state.totalHabits)
-        // Streaks: Deep Work = 3, Read Literature = 1, Evening Reflection = 0 -> average(3,1,0)=1.33 -> 1
         assertEquals(1, state.meanStreakDays)
         assertTrue(state.completionRatePercent > 0)
         assertEquals(listOf("ALL (3)", "FOCUS (1)", "MIND (2)"), state.filterChips.map { it.label })
@@ -98,11 +99,11 @@ class AllHabitsViewModelTest {
     }
 
     @Test
-    fun allHabits_filtersByDomainChipAndSearchQueryAndResetsCleanly() = runTest {
+    fun allHabits_filtersByDomainChipSearchQueryAndPauseStatus() = runTest {
         val today = LocalDate.of(2026, 5, 15)
         val repo = FakeAllHabitsRepository(
             habits = listOf(
-                Habit(
+                Habit.singleSchedule(
                     id = 1L,
                     title = "Deep Work",
                     description = "Terminal open, phone locked in drawer.",
@@ -110,7 +111,7 @@ class AllHabitsViewModelTest {
                     cadenceType = CadenceType.DAILY,
                     sortOrder = 0,
                 ),
-                Habit(
+                Habit.singleSchedule(
                     id = 2L,
                     title = "Tempo Run",
                     description = "Shoes set at doorway.",
@@ -118,8 +119,9 @@ class AllHabitsViewModelTest {
                     cadenceType = CadenceType.WEEKLY,
                     scheduledDays = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
                     sortOrder = 1,
+                    pauseWindows = listOf(HabitPauseWindow(1L, today, today.plusDays(3))),
                 ),
-                Habit(
+                Habit.singleSchedule(
                     id = 3L,
                     title = "Read Literature",
                     description = "Kindle or paper copy only.",
@@ -139,7 +141,17 @@ class AllHabitsViewModelTest {
         }
         advanceUntilIdle()
 
+        val runItem = viewModel.uiState.value.filteredHabits.first { it.habit.id == 2L }
+        assertTrue(runItem.isPausedToday)
+        assertEquals("PAUSED UNTIL MAY 18", runItem.pauseStatusLabel)
+        assertNull(viewModel.uiState.value.filteredHabits.first { it.habit.id == 1L }.pauseStatusLabel)
+
+        viewModel.onSearchQueryChanged("paused")
+        advanceUntilIdle()
+        assertEquals(listOf("Tempo Run"), viewModel.uiState.value.filteredHabits.map { it.habit.title })
+
         viewModel.selectDomain("FITNESS")
+        viewModel.clearSearch()
         advanceUntilIdle()
         assertEquals(listOf("Tempo Run"), viewModel.uiState.value.filteredHabits.map { it.habit.title })
 

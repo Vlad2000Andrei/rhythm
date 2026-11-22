@@ -27,7 +27,7 @@ import java.time.LocalDate
 
 private fun samplePreviewData(): Pair<List<Habit>, Map<LocalDate, Map<Long, Set<Int>>>> {
     val today = LocalDate.of(2026, 10, 24)
-    val deepWork = Habit(
+    val deepWork = Habit.singleSchedule(
         id = 1L,
         title = "Deep Work",
         description = "90 min uninterrupted session",
@@ -39,7 +39,7 @@ private fun samplePreviewData(): Pair<List<Habit>, Map<LocalDate, Map<Long, Set<
         timeOfDayBucket = TimeOfDayBucket.MORNING,
         createdAtEpochDay = today.minusDays(90).toEpochDay(),
     )
-    val reading = Habit(
+    val reading = Habit.singleSchedule(
         id = 2L,
         title = "10-Page Reading",
         description = "Non-fiction chapters",
@@ -50,7 +50,7 @@ private fun samplePreviewData(): Pair<List<Habit>, Map<LocalDate, Map<Long, Set<
         timeOfDayBucket = TimeOfDayBucket.MORNING,
         createdAtEpochDay = today.minusDays(90).toEpochDay(),
     )
-    val hydration = Habit(
+    val hydration = Habit.singleSchedule(
         id = 3L,
         title = "Hydration Target",
         description = "2.5L electrolyte water",
@@ -65,7 +65,7 @@ private fun samplePreviewData(): Pair<List<Habit>, Map<LocalDate, Map<Long, Set<
         timeOfDayBucket = TimeOfDayBucket.DURING_THE_DAY,
         createdAtEpochDay = today.minusDays(90).toEpochDay(),
     )
-    val journal = Habit(
+    val journal = Habit.singleSchedule(
         id = 4L,
         title = "Evening Reflection",
         description = "Daily debrief & journal",

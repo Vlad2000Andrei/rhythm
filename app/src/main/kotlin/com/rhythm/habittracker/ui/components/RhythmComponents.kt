@@ -380,9 +380,11 @@ fun RhythmMatrixCell(
     isUnscheduledEmpty: Boolean,
     activeColor: Color,
     modifier: Modifier = Modifier,
+    isPausedEmpty: Boolean = false,
     emptyColor: Color = RhythmSurfaceContainer,
     futureColor: Color = emptyColor,
     xColor: Color = RhythmOnSurfaceVariant.copy(alpha = 0.50f),
+    pauseColor: Color = RhythmOnSurfaceVariant.copy(alpha = 0.62f),
     isFuture: Boolean = false,
     cornerRadius: Dp = 2.dp,
     borderWidth: Dp = 0.dp,
@@ -409,7 +411,27 @@ fun RhythmMatrixCell(
             .background(cellColor)
             .drawWithContent {
                 drawContent()
-                if (isUnscheduledEmpty) {
+                if (isPausedEmpty) {
+                    val halfHeight = size.minDimension * 0.24f
+                    val barOffset = size.minDimension * 0.14f
+                    val cx = size.width / 2f
+                    val cy = size.height / 2f
+                    val strokeWidth = (size.minDimension * 0.14f).coerceAtLeast(1.1.dp.toPx())
+                    drawLine(
+                        color = pauseColor,
+                        start = Offset(cx - barOffset, cy - halfHeight),
+                        end = Offset(cx - barOffset, cy + halfHeight),
+                        strokeWidth = strokeWidth,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = pauseColor,
+                        start = Offset(cx + barOffset, cy - halfHeight),
+                        end = Offset(cx + barOffset, cy + halfHeight),
+                        strokeWidth = strokeWidth,
+                        cap = StrokeCap.Round,
+                    )
+                } else if (isUnscheduledEmpty) {
                     val halfSpan = size.minDimension * 0.22f
                     val cx = size.width / 2f
                     val cy = size.height / 2f

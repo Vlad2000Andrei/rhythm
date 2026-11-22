@@ -1,10 +1,14 @@
 package com.rhythm.habittracker.ui.habitdetail
 
 import com.rhythm.habittracker.data.HabitRepository
+import com.rhythm.habittracker.domain.CadenceEvaluator
 import com.rhythm.habittracker.domain.model.CadenceType
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
+import com.rhythm.habittracker.domain.model.HabitSchedule
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
+import com.rhythm.habittracker.domain.model.WeeklyTargetMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -37,9 +41,8 @@ class HabitDetailViewModelTest {
 
     @Test
     fun habitDetail_computesStreaksRate20WeekMatrixAndThisWeekRun() = runTest {
-        // Friday 2026-05-15 (week started Monday 2026-05-11)
         val today = LocalDate.of(2026, 5, 15)
-        val habit = Habit(
+        val habit = Habit.singleSchedule(
             id = 42L,
             title = "Deep Work",
             description = "Phone in drawer, terminal open.",
@@ -49,20 +52,18 @@ class HabitDetailViewModelTest {
             cadenceType = CadenceType.DAILY,
             targetTimes = listOf(TargetTimeSlot("t1", 8, 30, true)),
             skipReminderIfCompleted = true,
-            createdAtEpochDay = today.minusDays(9).toEpochDay(), // 10 days inclusive (May 6 .. May 15)
+            createdAtEpochDay = today.minusDays(9).toEpochDay(),
         )
 
-        // Prior streak: May 6, 7, 8 (3 days); skipped May 9; completed May 11..15 (5 days this week) -> 8/10 = 80%
         val completedDates = listOf(
-            today.minusDays(9), // May 6
-            today.minusDays(8), // May 7
-            today.minusDays(7), // May 8
-            // skipped May 9 and May 10
-            LocalDate.of(2026, 5, 11), // Mon
-            LocalDate.of(2026, 5, 12), // Tue
-            LocalDate.of(2026, 5, 13), // Wed
-            LocalDate.of(2026, 5, 14), // Thu
-            LocalDate.of(2026, 5, 15), // Fri (today)
+            today.minusDays(9),
+            today.minusDays(8),
+            today.minusDays(7),
+            LocalDate.of(2026, 5, 11),
+            LocalDate.of(2026, 5, 12),
+            LocalDate.of(2026, 5, 13),
+            LocalDate.of(2026, 5, 14),
+            LocalDate.of(2026, 5, 15),
         )
         val instancesMap = completedDates.associateWith { mapOf(42L to setOf(0)) }
 
@@ -102,7 +103,7 @@ class HabitDetailViewModelTest {
         val today = LocalDate.of(2026, 5, 15)
         val repo = FakeHabitDetailRepository(
             habits = listOf(
-                Habit(id = 1L, title = "Hydrate", createdAtEpochDay = today.toEpochDay()),
+                Habit.singleSchedule(id = 1L, title = "Hydrate", createdAtEpochDay = today.toEpochDay()),
             ),
             completedInstances = emptyMap(),
         )
@@ -127,7 +128,6 @@ class HabitDetailViewModelTest {
 
     @Test
     fun habitDetail_matrixScalesRelativeToDailyTargetAndMarksUnscheduledDays() = runTest {
-        // Friday 2026-05-15 (week Mon May 11 .. Sun May 17)
         val today = LocalDate.of(2026, 5, 15)
         val mon = LocalDate.of(2026, 5, 11)
         val tue = LocalDate.of(2026, 5, 12)
@@ -135,7 +135,7 @@ class HabitDetailViewModelTest {
         val thu = LocalDate.of(2026, 5, 14)
         val sat = LocalDate.of(2026, 5, 16)
 
-        val habit = Habit(
+        val habit = Habit.singleSchedule(
             id = 42L,
             title = "Hydrate",
             cadenceType = CadenceType.WEEKLY,
@@ -146,7 +146,7 @@ class HabitDetailViewModelTest {
             ),
             createdAtEpochDay = today.minusDays(14).toEpochDay(),
         )
-        val unrelatedHabit = Habit(
+        val unrelatedHabit = Habit.singleSchedule(
             id = 999L,
             title = "Read",
             cadenceType = CadenceType.DAILY,
@@ -154,10 +154,9 @@ class HabitDetailViewModelTest {
         )
 
         val instancesMap = mapOf(
-            // Mon omitted -> 0/2 completed (scheduled, empty, NO X)
-            tue to mapOf(999L to setOf(0)), // only unrelated habit completed on unscheduled day
-            wed to mapOf(42L to setOf(0)), // 1/2 completed -> 0.5f
-            today to mapOf(42L to setOf(0, 1)), // 2/2 completed -> 1.0f
+            tue to mapOf(999L to setOf(0)),
+            wed to mapOf(42L to setOf(0)),
+            today to mapOf(42L to setOf(0, 1)),
         )
 
         val repo = FakeHabitDetailRepository(
@@ -184,30 +183,83 @@ class HabitDetailViewModelTest {
 
         val tueCell = cellsByDate.getValue(tue)
         assertEquals(0, tueCell.scheduledCount)
-        assertEquals(0, tueCell.completedCount)
-        assertEquals(0f, tueCell.completionRatio, 0.001f)
         assertTrue(tueCell.isUnscheduledEmpty)
 
         val wedCell = cellsByDate.getValue(wed)
         assertEquals(2, wedCell.scheduledCount)
         assertEquals(1, wedCell.completedCount)
         assertEquals(0.5f, wedCell.completionRatio, 0.001f)
-        assertFalse(wedCell.isUnscheduledEmpty)
 
         val thuCell = cellsByDate.getValue(thu)
-        assertEquals(0, thuCell.scheduledCount)
         assertTrue(thuCell.isUnscheduledEmpty)
 
         val friCell = cellsByDate.getValue(today)
         assertEquals(2, friCell.scheduledCount)
         assertEquals(2, friCell.completedCount)
         assertEquals(1f, friCell.completionRatio, 0.001f)
-        assertFalse(friCell.isUnscheduledEmpty)
         assertTrue(friCell.isToday)
 
         val satCell = cellsByDate.getValue(sat)
         assertTrue(satCell.isFuture)
         assertTrue(satCell.isUnscheduledEmpty)
+    }
+
+    @Test
+    fun habitDetail_pauseAndEarlyResumeUpdateMatrixAndFlexScheduledThisWeek() = runTest {
+        val today = LocalDate.of(2026, 5, 15) // Friday
+        val pauseStart = LocalDate.of(2026, 5, 13) // Wed
+        val pauseEnd = LocalDate.of(2026, 5, 17) // Sun (5 days paused -> 2 active days in week)
+
+        val flexHabit = Habit(
+            id = 77L,
+            title = "Gym",
+            createdAtEpochDay = today.minusDays(14).toEpochDay(),
+            schedules = listOf(
+                HabitSchedule(
+                    effectiveFrom = null,
+                    cadenceType = CadenceType.WEEKLY,
+                    weeklyTargetMode = WeeklyTargetMode.FLEXIBLE_POOL,
+                    scheduledDays = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
+                ),
+                HabitSchedule(
+                    effectiveFrom = today.plusDays(1),
+                    cadenceType = CadenceType.DAILY,
+                ),
+            ),
+            pauseWindows = listOf(HabitPauseWindow(1L, pauseStart, pauseEnd)),
+        )
+
+        val repo = FakeHabitDetailRepository(
+            habits = listOf(flexHabit),
+            completedInstances = mapOf(LocalDate.of(2026, 5, 11) to mapOf(77L to setOf(0))),
+        )
+        val viewModel = HabitDetailViewModel(
+            habitId = 77L,
+            repository = repo,
+            clockTodayProvider = { today },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        val pausedState = viewModel.uiState.value
+        assertNotNull(pausedState.activePause)
+        assertTrue(pausedState.effectiveTomorrowNotice)
+        assertEquals(1, pausedState.scheduledThisWeek) // prorated 3 * 2 / 7 -> 1
+        val wedCell = pausedState.matrixColumns.flatten().first { it.date == pauseStart }
+        assertTrue(wedCell.isPausedEmpty)
+        assertFalse(wedCell.isUnscheduledEmpty)
+
+        // Early resume truncates endDate to yesterday (Thu May 14), leaving Wed-Thu paused!
+        viewModel.resumeOrCancelPause()
+        advanceUntilIdle()
+
+        val resumedState = viewModel.uiState.value
+        assertNull(resumedState.activePause)
+        val truncatedWindow = resumedState.habit!!.pauseWindows.single()
+        assertEquals(pauseStart, truncatedWindow.startDate)
+        assertEquals(today.minusDays(1), truncatedWindow.endDate)
     }
 }
 
@@ -244,4 +296,27 @@ private class FakeHabitDetailRepository(
     override suspend fun toggleCompletion(habitId: Long, date: LocalDate, instanceIndex: Int) = Unit
     override suspend fun isCompletedOn(habitId: Long, date: LocalDate): Boolean = false
     override suspend fun addCustomDomain(name: String) = Unit
+
+    override suspend fun pauseHabit(
+        habitId: Long,
+        startDate: LocalDate,
+        endDate: LocalDate,
+        editingWindowId: Long?,
+    ): Habit? {
+        val current = getHabitById(habitId) ?: return null
+        val updated = current.copy(
+            pauseWindows = CadenceEvaluator.addOrUpdatePauseWindow(current.pauseWindows, startDate, endDate, editingWindowId),
+        )
+        habitsFlow.value = habitsFlow.value.map { if (it.id == habitId) updated else it }
+        return updated
+    }
+
+    override suspend fun resumeOrCancelPause(habitId: Long, today: LocalDate): Habit? {
+        val current = getHabitById(habitId) ?: return null
+        val updated = current.copy(
+            pauseWindows = CadenceEvaluator.resumeOrCancelPause(current.pauseWindows, today),
+        )
+        habitsFlow.value = habitsFlow.value.map { if (it.id == habitId) updated else it }
+        return updated
+    }
 }

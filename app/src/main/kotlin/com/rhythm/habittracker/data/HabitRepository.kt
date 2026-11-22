@@ -8,13 +8,17 @@ import com.rhythm.habittracker.data.local.toDomain
 import com.rhythm.habittracker.data.local.toEntity
 import com.rhythm.habittracker.domain.CadenceEvaluator
 import com.rhythm.habittracker.domain.model.Habit
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
+import com.rhythm.habittracker.domain.model.HabitSchedule
 import com.rhythm.habittracker.domain.model.HabitSortMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
 
 data class DashboardPreferences(
     val selectedDomain: String = "All Habits",
@@ -51,6 +55,8 @@ interface HabitRepository {
     suspend fun isCompletedOn(habitId: Long, date: LocalDate): Boolean
     suspend fun getCompletedInstancesOn(habitId: Long, date: LocalDate): Set<Int> =
         if (isCompletedOn(habitId, date)) setOf(0) else emptySet()
+    suspend fun getCompletedDatesInWeek(habitId: Long, date: LocalDate, dailyTargetCount: Int): Set<LocalDate> =
+        if (isCompletedOn(habitId, date)) setOf(date) else emptySet()
     suspend fun addCustomDomain(name: String)
     suspend fun removeCustomDomain(name: String) = Unit
     suspend fun saveDashboardPreferences(selectedDomain: String, sortMode: HabitSortMode) = Unit
@@ -58,16 +64,26 @@ interface HabitRepository {
         rescheduleHabitWithUndo(habitId, fromDate, toDate) != null
     suspend fun rescheduleHabitWithUndo(habitId: Long, fromDate: LocalDate, toDate: LocalDate): RescheduleOutcome? = null
     suspend fun undoReschedule(token: RescheduleUndoToken): Habit? = null
+    suspend fun pauseHabit(
+        habitId: Long,
+        startDate: LocalDate,
+        endDate: LocalDate,
+        editingWindowId: Long? = null,
+    ): Habit? = null
+    suspend fun resumeOrCancelPause(
+        habitId: Long,
+        today: LocalDate = LocalDate.now(),
+    ): Habit? = null
 }
 
 class RoomHabitRepository(
     private val dao: HabitDao,
 ) : HabitRepository {
 
-    private val rescheduleMutex = Mutex()
+    private val habitMutationMutex = Mutex()
 
     override fun observeHabits(): Flow<List<Habit>> =
-        dao.observeHabits().map { list -> list.map { it.toDomain() } }
+        dao.observeHabitsWithDetails().map { list -> list.map { it.toDomain() } }
 
     override fun observeCompletionsByDate(): Flow<Map<LocalDate, Set<Long>>> =
         dao.observeAllCompletions().map { entries ->
@@ -103,9 +119,9 @@ class RoomHabitRepository(
         }
 
     override suspend fun getHabitById(habitId: Long): Habit? =
-        dao.getHabitById(habitId)?.toDomain()
+        dao.getHabitWithDetailsById(habitId)?.toDomain()
 
-    override suspend fun saveHabit(habit: Habit): Long {
+    override suspend fun saveHabit(habit: Habit): Long = habitMutationMutex.withLock {
         val trimmedDomain = habit.domain.trim()
         if (trimmedDomain.isNotEmpty()) {
             dao.insertCustomDomain(
@@ -120,13 +136,27 @@ class RoomHabitRepository(
         } else {
             habit.sortOrder
         }
-        val entity = habit.copy(domain = trimmedDomain, sortOrder = nextSortOrder).toEntity()
-        return if (habit.id == 0L) {
-            dao.insertHabit(entity)
-        } else {
-            dao.updateHabit(entity)
-            habit.id
-        }
+        val normalizedSchedules = habit.schedules
+            .sortedWith(HabitSchedule.CHRONOLOGICAL_ORDER)
+            .ifEmpty { listOf(HabitSchedule()) }
+            .mapIndexed { index, schedule ->
+                if (index == 0 && schedule.effectiveFrom != null) {
+                    schedule.copy(effectiveFrom = null)
+                } else {
+                    schedule
+                }
+            }
+        val normalizedPauses = HabitPauseWindow.normalize(habit.pauseWindows)
+        val normalizedHabit = habit.copy(
+            domain = trimmedDomain,
+            sortOrder = nextSortOrder,
+            schedules = normalizedSchedules,
+            pauseWindows = normalizedPauses,
+        )
+        val entity = normalizedHabit.toEntity()
+        val scheduleEntities = normalizedSchedules.map { it.toEntity(normalizedHabit.id) }
+        val pauseEntities = normalizedPauses.map { it.toEntity(normalizedHabit.id) }
+        dao.upsertHabitWithDetails(entity, scheduleEntities, pauseEntities)
     }
 
     override suspend fun deleteHabit(habitId: Long) {
@@ -165,6 +195,28 @@ class RoomHabitRepository(
             .toSet()
     }
 
+    override suspend fun getCompletedDatesInWeek(
+        habitId: Long,
+        date: LocalDate,
+        dailyTargetCount: Int,
+    ): Set<LocalDate> {
+        val habit = getHabitById(habitId)
+        val weekStart = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val weekEnd = weekStart.plusDays(6)
+        val entries = dao.getCompletionsForHabitInRange(
+            habitId = habitId,
+            startEpochDay = weekStart.toEpochDay(),
+            endEpochDay = weekEnd.toEpochDay(),
+        )
+        return entries
+            .groupBy { LocalDate.ofEpochDay(it.dateEpochDay) }
+            .filter { (d, list) ->
+                val target = habit?.scheduleForDate(d)?.dailyTargetCount ?: dailyTargetCount
+                list.map { it.instanceIndex }.toSet().size >= target
+            }
+            .keys
+    }
+
     override suspend fun addCustomDomain(name: String) {
         val trimmed = name.trim()
         if (trimmed.isNotEmpty()) {
@@ -201,7 +253,7 @@ class RoomHabitRepository(
         habitId: Long,
         fromDate: LocalDate,
         toDate: LocalDate,
-    ): RescheduleOutcome? = rescheduleMutex.withLock {
+    ): RescheduleOutcome? = habitMutationMutex.withLock {
         val current = getHabitById(habitId) ?: return null
         val updated = CadenceEvaluator.rescheduleHabitDate(current, fromDate, toDate) ?: return null
         val fromEpoch = fromDate.toEpochDay()
@@ -210,8 +262,11 @@ class RoomHabitRepository(
             .map { it.instanceIndex }
             .toSet()
 
-        dao.updateHabitAndClearCompletionsForDates(
-            habit = updated.toEntity(),
+        val updatedEntity = updated.toEntity()
+        dao.updateRescheduleAndClearCompletionsForDates(
+            habitId = habitId,
+            fromCsv = updatedEntity.rescheduledFromEpochDaysCsv,
+            toCsv = updatedEntity.rescheduledToEpochDaysCsv,
             fromEpochDay = fromEpoch,
             toEpochDay = toEpoch,
         )
@@ -226,9 +281,9 @@ class RoomHabitRepository(
         )
     }
 
-    override suspend fun undoReschedule(token: RescheduleUndoToken): Habit? = rescheduleMutex.withLock {
+    override suspend fun undoReschedule(token: RescheduleUndoToken): Habit? = habitMutationMutex.withLock {
         val current = getHabitById(token.habitBefore.id) ?: return null
-        if (CadenceEvaluator.hasCadenceChanged(token.habitBefore, current)) {
+        if (CadenceEvaluator.hasHabitScheduleOrPauseChanged(token.habitBefore, current)) {
             return null
         }
         val restoredHabit = CadenceEvaluator.sanitizeRescheduleOverrides(
@@ -237,6 +292,7 @@ class RoomHabitRepository(
                 rescheduledToDates = token.habitBefore.rescheduledToDates,
             ),
         )
+        val restoredEntity = restoredHabit.toEntity()
         val fromEpoch = token.fromDate.toEpochDay()
         val toEpoch = token.toDate.toEpochDay()
         val nowMillis = System.currentTimeMillis()
@@ -248,12 +304,50 @@ class RoomHabitRepository(
                 completedAtMillis = nowMillis,
             )
         }
-        dao.restoreHabitAndCompletionsForDates(
-            habit = restoredHabit.toEntity(),
+        dao.restoreRescheduleAndCompletionsForDates(
+            habitId = restoredHabit.id,
+            fromCsv = restoredEntity.rescheduledFromEpochDaysCsv,
+            toCsv = restoredEntity.rescheduledToEpochDaysCsv,
             fromEpochDay = fromEpoch,
             toEpochDay = toEpoch,
             restoredCompletionsOnFromDate = restoredEntities,
         )
         restoredHabit
+    }
+
+    override suspend fun pauseHabit(
+        habitId: Long,
+        startDate: LocalDate,
+        endDate: LocalDate,
+        editingWindowId: Long?,
+    ): Habit? = habitMutationMutex.withLock {
+        val current = getHabitById(habitId) ?: return null
+        val updatedPauses = CadenceEvaluator.addOrUpdatePauseWindow(
+            existing = current.pauseWindows,
+            startDate = startDate,
+            endDate = endDate,
+            editingWindowId = editingWindowId,
+        )
+        dao.replacePausesForHabit(
+            habitId = habitId,
+            pauses = updatedPauses.map { it.toEntity(habitId) },
+        )
+        getHabitById(habitId)
+    }
+
+    override suspend fun resumeOrCancelPause(
+        habitId: Long,
+        today: LocalDate,
+    ): Habit? = habitMutationMutex.withLock {
+        val current = getHabitById(habitId) ?: return null
+        val updatedPauses = CadenceEvaluator.resumeOrCancelPause(
+            existing = current.pauseWindows,
+            today = today,
+        )
+        dao.replacePausesForHabit(
+            habitId = habitId,
+            pauses = updatedPauses.map { it.toEntity(habitId) },
+        )
+        getHabitById(habitId)
     }
 }

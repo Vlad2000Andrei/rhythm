@@ -61,10 +61,13 @@ import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.outlined.AutoGraph
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CalendarViewMonth
+import androidx.compose.material.icons.outlined.PauseCircleOutline
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -217,6 +220,7 @@ fun DashboardScreenContent(
     var showSortMenu by remember { mutableStateOf(false) }
     var showProfileDialog by remember { mutableStateOf(false) }
     var isFabMenuExpanded by remember { mutableStateOf(false) }
+    var isPausedExpanded by remember { mutableStateOf(false) }
     var reschedulingTarget by remember { mutableStateOf<Pair<Long, LocalDate>?>(null) }
     var confettiTrigger by remember { mutableIntStateOf(0) }
     var prevDate by remember { mutableStateOf(uiState.selectedDate) }
@@ -404,9 +408,98 @@ fun DashboardScreenContent(
                     }
                 }
 
+                if (uiState.pausedHabits.isNotEmpty()) {
+                    item(key = "paused_header") {
+                        val pausedHeaderTitle = if (uiState.selectedDate == uiState.today) {
+                            "PAUSED TODAY (${uiState.pausedHabits.size})"
+                        } else {
+                            "PAUSED (${uiState.pausedHabits.size})"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = RhythmSurfaceContainerLow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateItem(
+                                    fadeInSpec = tween(220),
+                                    placementSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow,
+                                    ),
+                                    fadeOutSpec = tween(180),
+                                )
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { isPausedExpanded = !isPausedExpanded },
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.PauseCircleOutline,
+                                        contentDescription = null,
+                                        tint = RhythmOnSurfaceVariant,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        text = pausedHeaderTitle,
+                                        style = RhythmTheme.tokens.labelSm,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = RhythmOnSurfaceVariant,
+                                    )
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        text = if (isPausedExpanded) "HIDE" else "SHOW",
+                                        style = RhythmTheme.tokens.labelSm,
+                                        color = RhythmSecondary,
+                                    )
+                                    Icon(
+                                        imageVector = if (isPausedExpanded) {
+                                            Icons.Rounded.KeyboardArrowUp
+                                        } else {
+                                            Icons.Rounded.KeyboardArrowDown
+                                        },
+                                        contentDescription = if (isPausedExpanded) "Collapse paused habits" else "Expand paused habits",
+                                        tint = RhythmOnSurfaceVariant,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (isPausedExpanded) {
+                        items(
+                            items = uiState.pausedHabits,
+                            key = { "paused_${uiState.selectedDate}_${it.habit.id}" },
+                        ) { pausedItem ->
+                            PausedHabitCard(
+                                item = pausedItem,
+                                onClick = { onOpenHabitDetail(pausedItem.habit.id) },
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(220),
+                                    fadeOutSpec = tween(180),
+                                ),
+                            )
+                        }
+                    }
+                }
+
                 if (!uiState.isLoading && uiState.pendingHabits.isEmpty() && uiState.completedHabits.isEmpty()) {
                     item(key = "empty_state") {
                         EmptyDayCard(
+                            pausedCount = uiState.pausedHabits.size,
                             onCreateHabit = onCreateHabit,
                             modifier = Modifier.animateItem(
                                 fadeInSpec = tween(250),
@@ -1223,6 +1316,7 @@ private fun CadenceMatrixCard(
                                         RhythmMatrixCell(
                                             completionRatio = cell.completionRatio,
                                             isUnscheduledEmpty = cell.isUnscheduledEmpty,
+                                            isPausedEmpty = cell.isPausedEmpty,
                                             activeColor = ConsistencyEmerald,
                                             modifier = Modifier.size(cellSize),
                                             emptyColor = RhythmSurfaceContainer,
@@ -1953,7 +2047,7 @@ private fun HabitCard(
                                 }
                             }
 
-                            val resolvedTimeLabel = (item.timeSlot ?: item.habit.targetTimes.firstOrNull())?.formatted()
+                            val resolvedTimeLabel = (item.timeSlot ?: item.habit.scheduleForDate(selectedDate).targetTimes.firstOrNull())?.formatted()
                             val scheduleChipLabel = when {
                                 item.totalInstances > 1 && resolvedTimeLabel != null ->
                                     "${item.instanceIndex + 1}/${item.totalInstances} · $resolvedTimeLabel"
@@ -2219,7 +2313,8 @@ private fun RescheduleHabitDialog(
 
     val isSameDate = selectedTargetDate == currentDate
     val isAlreadyScheduled = !isSameDate && CadenceEvaluator.isHabitScheduledOn(item.habit, selectedTargetDate)
-    val canConfirm = !isSameDate && !isAlreadyScheduled
+    val isPausedTarget = !isSameDate && item.habit.isPausedOn(selectedTargetDate)
+    val canConfirm = !isSameDate && !isAlreadyScheduled && !isPausedTarget
 
     val quickOptions = remember(currentDate) {
         listOf(
@@ -2364,15 +2459,18 @@ private fun RescheduleHabitDialog(
                                 } else {
                                     val isSelected = date == selectedTargetDate
                                     val isCurrent = date == currentDate
+                                    val isPausedDate = item.habit.isPausedOn(date)
                                     val hasScheduledInstance = CadenceEvaluator.isHabitScheduledOn(item.habit, date)
+                                    val hasConflict = isAlreadyScheduled || isPausedTarget
                                     val bg = when {
-                                        isSelected && isAlreadyScheduled -> RhythmError
+                                        isSelected && hasConflict -> RhythmError
                                         isSelected -> RhythmPrimary
                                         isCurrent -> RhythmSurfaceContainerHigh
                                         else -> RhythmSurfaceContainerLow
                                     }
                                     val fg = when {
                                         isSelected -> RhythmOnPrimary
+                                        isPausedDate -> RhythmOnSurfaceVariant.copy(alpha = 0.65f)
                                         isCurrent -> RhythmOnSurface
                                         else -> RhythmOnSurface
                                     }
@@ -2410,6 +2508,25 @@ private fun RescheduleHabitDialog(
                                                             if (isSelected) RhythmOnPrimary else item.habit.accentColor.color,
                                                         ),
                                                 )
+                                            } else if (isPausedDate) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .width(1.5.dp)
+                                                            .height(4.dp)
+                                                            .background(
+                                                                if (isSelected) RhythmOnPrimary else RhythmOnSurfaceVariant.copy(alpha = 0.6f),
+                                                            ),
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .width(1.5.dp)
+                                                            .height(4.dp)
+                                                            .background(
+                                                                if (isSelected) RhythmOnPrimary else RhythmOnSurfaceVariant.copy(alpha = 0.6f),
+                                                            ),
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -2419,7 +2536,32 @@ private fun RescheduleHabitDialog(
                     }
                 }
 
-                if (isAlreadyScheduled) {
+                if (isPausedTarget) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = RhythmError.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, RhythmError.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.WarningAmber,
+                                contentDescription = null,
+                                tint = RhythmError,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                text = "\"${item.habit.title}\" is paused on ${selectedTargetDate.format(dateFormatter)}. Choose an active date or resume the habit first.",
+                                style = tokens.bodySm,
+                                color = RhythmError,
+                            )
+                        }
+                    }
+                } else if (isAlreadyScheduled) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = RhythmError.copy(alpha = 0.08f),
@@ -2476,7 +2618,82 @@ private fun RescheduleHabitDialog(
 }
 
 @Composable
+private fun PausedHabitCard(
+    item: PausedHabitItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val accent = item.habit.accentColor.color
+    Surface(
+        color = RhythmSurfaceContainerLowest,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, RhythmSurfaceContainerHigh),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(accent.copy(alpha = 0.45f)),
+            )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = item.habit.title,
+                        style = RhythmTheme.tokens.bodyMd,
+                        fontWeight = FontWeight.Medium,
+                        color = RhythmOnSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "Paused until ${item.pausedUntilLabel} · Resumes ${item.resumesOnLabel}",
+                        style = RhythmTheme.tokens.bodySm,
+                        color = RhythmSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = RhythmSurfaceContainerLow,
+                ) {
+                    Text(
+                        text = "RESUME",
+                        style = RhythmTheme.tokens.labelSm,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RhythmOnSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun EmptyDayCard(
+    pausedCount: Int,
     onCreateHabit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2485,7 +2702,7 @@ private fun EmptyDayCard(
         shape = RoundedCornerShape(12.dp),
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onCreateHabit),
+            .then(if (pausedCount == 0) Modifier.clickable(onClick = onCreateHabit) else Modifier),
     ) {
         Column(
             modifier = Modifier
@@ -2495,12 +2712,16 @@ private fun EmptyDayCard(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = "NO HABITS SCHEDULED",
+                text = if (pausedCount > 0) "ALL SCHEDULED HABITS PAUSED" else "NO HABITS SCHEDULED",
                 style = RhythmTheme.tokens.labelMd,
                 color = RhythmOnSurface,
             )
             Text(
-                text = "Tap + to add a habit for this cadence window.",
+                text = if (pausedCount > 0) {
+                    "$pausedCount ${if (pausedCount == 1) "habit is" else "habits are"} paused on this date. Expand Paused above to view or resume early."
+                } else {
+                    "Tap + to add a habit for this cadence window."
+                },
                 style = RhythmTheme.tokens.bodySm,
                 color = RhythmOnSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -2649,7 +2870,7 @@ private fun DashboardScreenPreview() {
         domainFilters = listOf("All Habits", "Mind", "Health", "Focus"),
         pendingHabits = listOf(
             HabitCardItem(
-                habit = Habit(
+                habit = Habit.singleSchedule(
                     id = 5,
                     title = "Evening Reflection",
                     description = "3 gratitudes + friction review",
@@ -2662,7 +2883,7 @@ private fun DashboardScreenPreview() {
                 streakDays = 19,
             ),
             HabitCardItem(
-                habit = Habit(
+                habit = Habit.singleSchedule(
                     id = 6,
                     title = "Screen-free by 10:30 PM",
                     description = "Analog wind-down · Dim room lighting",
@@ -2677,7 +2898,7 @@ private fun DashboardScreenPreview() {
         ),
         completedHabits = listOf(
             HabitCardItem(
-                habit = Habit(
+                habit = Habit.singleSchedule(
                     id = 1,
                     title = "Deep Work (90 min)",
                     description = "08:00 - 09:30 AM · Distraction-free block",

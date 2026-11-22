@@ -366,7 +366,14 @@ object WidgetBitmapRenderer {
                 cellPaint.color = matrixCellColor(cell, activeColor, palette)
                 canvas.drawRoundRect(rect, corner, corner, cellPaint)
 
-                if (cell.isUnscheduledEmpty) {
+                if (cell.isPausedEmpty) {
+                    val halfHeight = cellSize * 0.24f
+                    val barOffset = cellSize * 0.14f
+                    val cx = rect.centerX()
+                    val cy = rect.centerY()
+                    canvas.drawLine(cx - barOffset, cy - halfHeight, cx - barOffset, cy + halfHeight, xPaint)
+                    canvas.drawLine(cx + barOffset, cy - halfHeight, cx + barOffset, cy + halfHeight, xPaint)
+                } else if (cell.isUnscheduledEmpty) {
                     val halfSpan = cellSize * 0.22f
                     val cx = rect.centerX()
                     val cy = rect.centerY()

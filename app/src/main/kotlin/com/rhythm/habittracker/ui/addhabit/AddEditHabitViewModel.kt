@@ -12,6 +12,8 @@ import com.rhythm.habittracker.domain.model.CustomCadenceArchetype
 import com.rhythm.habittracker.domain.model.EndOfMonthBehavior
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitEditScope
+import com.rhythm.habittracker.domain.model.HabitSchedule
 import com.rhythm.habittracker.domain.model.IntervalUnit
 import com.rhythm.habittracker.domain.model.MonthlySubMode
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
@@ -30,6 +32,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.UUID
 
 enum class WeeklyPreset(val label: String, val days: Set<DayOfWeek>) {
@@ -45,6 +49,12 @@ enum class MonthlyDatePreset(val title: String, val badge: String, val dates: Se
     LAST_DAY("Last day of month", "EOM", setOf(31)),
     QUARTER_START("Quarter start", "QTR", setOf(1)),
 }
+
+data class SaveScopeDialogState(
+    val futureEffectiveDate: LocalDate,
+    val isEffectiveTomorrowBecauseCompletedToday: Boolean,
+    val hasExistingScheduleHistory: Boolean,
+)
 
 data class AddEditHabitUiState(
     val editingHabitId: Long? = null,
@@ -72,6 +82,9 @@ data class AddEditHabitUiState(
     val skipReminderIfCompleted: Boolean = true,
     val anchorDate: LocalDate = LocalDate.now(),
     val draftSavedIndicator: Boolean = true,
+    val hasUnsavedChanges: Boolean = false,
+    val pendingSaveScopeDialog: SaveScopeDialogState? = null,
+    val showUnsavedChangesDialog: Boolean = false,
     val isSaving: Boolean = false,
 ) {
     val isEditing: Boolean
@@ -105,29 +118,28 @@ class AddEditHabitViewModel(
     private val repository: HabitRepository,
     private val draftStore: DraftHabitStore?,
     private val reminderScheduler: ReminderScheduler? = null,
+    private val clockTodayProvider: () -> LocalDate = { LocalDate.now() },
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(AddEditHabitUiState(editingHabitId = editingHabitId))
+    private val _uiState = MutableStateFlow(
+        AddEditHabitUiState(
+            editingHabitId = editingHabitId,
+            anchorDate = clockTodayProvider(),
+        ),
+    )
     val uiState: StateFlow<AddEditHabitUiState> = _uiState.asStateFlow()
 
     private val _events = MutableSharedFlow<AddEditHabitEvent>()
     val events: SharedFlow<AddEditHabitEvent> = _events.asSharedFlow()
 
-    private var customDomainsList: List<String> = emptyList()
     private var initialHabitSnapshot: Habit? = null
-    private var existingSortOrder: Int = 0
-    private var existingCreatedEpochDay: Long = LocalDate.now().toEpochDay()
-    private var existingSubTag: String? = null
-    private var existingRescheduledFromDates: Set<LocalDate> = emptySet()
-    private var existingRescheduledToDates: Set<LocalDate> = emptySet()
-    private var autosaveJob: Job? = null
     private var draftSaveJob: Job? = null
     private var isInitialLoadComplete: Boolean = editingHabitId == null
+    private var hasUserPickedAnchorDate: Boolean = false
 
     init {
         viewModelScope.launch {
             repository.observeCustomDomains().collect { custom ->
-                customDomainsList = custom
                 val merged = custom.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
                 _uiState.update { state ->
                     val withSelected = if (state.selectedDomain.isNotBlank() && state.selectedDomain !in merged) {
@@ -145,11 +157,7 @@ class AddEditHabitViewModel(
                 val habit = repository.getHabitById(editingHabitId)
                 if (habit != null) {
                     initialHabitSnapshot = habit
-                    existingSortOrder = habit.sortOrder
-                    existingCreatedEpochDay = habit.createdAtEpochDay
-                    existingSubTag = habit.subTag
-                    existingRescheduledFromDates = habit.rescheduledFromDates
-                    existingRescheduledToDates = habit.rescheduledToDates
+                    val latest = habit.latestSchedule
                     _uiState.update { state ->
                         val domains = (state.availableDomains + habit.domain)
                             .map { it.trim() }
@@ -161,23 +169,24 @@ class AddEditHabitViewModel(
                             availableDomains = domains,
                             selectedDomain = habit.domain.trim(),
                             selectedColor = habit.accentColor,
-                            cadenceType = habit.cadenceType,
-                            scheduledDays = habit.scheduledDays,
-                            weeklyTargetMode = habit.weeklyTargetMode,
-                            monthlySubMode = habit.monthlySubMode,
-                            monthlyDates = habit.monthlyDates,
-                            ordinalWeek = habit.ordinalWeek,
-                            ordinalDayOfWeek = habit.ordinalDayOfWeek,
-                            endOfMonthBehavior = habit.endOfMonthBehavior,
-                            customArchetype = habit.customArchetype,
-                            customInterval = habit.customInterval,
-                            customIntervalUnit = habit.customIntervalUnit,
-                            cycleDaysOn = habit.cycleDaysOn,
-                            cycleDaysOff = habit.cycleDaysOff,
-                            targetPerPeriod = habit.targetPerPeriod,
-                            targetTimes = habit.targetTimes.ifEmpty { AddEditHabitUiState.DEFAULT_TARGET_TIMES },
+                            cadenceType = latest.cadenceType,
+                            scheduledDays = latest.scheduledDays,
+                            weeklyTargetMode = latest.weeklyTargetMode,
+                            monthlySubMode = latest.monthlySubMode,
+                            monthlyDates = latest.monthlyDates,
+                            ordinalWeek = latest.ordinalWeek,
+                            ordinalDayOfWeek = latest.ordinalDayOfWeek,
+                            endOfMonthBehavior = latest.endOfMonthBehavior,
+                            customArchetype = latest.customArchetype,
+                            customInterval = latest.customInterval,
+                            customIntervalUnit = latest.customIntervalUnit,
+                            cycleDaysOn = latest.cycleDaysOn,
+                            cycleDaysOff = latest.cycleDaysOff,
+                            targetPerPeriod = latest.targetPerPeriod,
+                            targetTimes = latest.targetTimes.ifEmpty { AddEditHabitUiState.DEFAULT_TARGET_TIMES },
                             skipReminderIfCompleted = habit.skipReminderIfCompleted,
-                            anchorDate = habit.anchorDate,
+                            anchorDate = latest.anchorDate,
+                            hasUnsavedChanges = false,
                         )
                     }
                 }
@@ -225,33 +234,51 @@ class AddEditHabitViewModel(
                 targetPerPeriod = draft.targetPerPeriod,
                 targetTimes = draft.targetTimes.ifEmpty { AddEditHabitUiState.DEFAULT_TARGET_TIMES },
                 skipReminderIfCompleted = draft.skipReminderIfCompleted,
-                anchorDate = draft.anchorDateEpochDay?.let(LocalDate::ofEpochDay) ?: LocalDate.now(),
+                anchorDate = draft.anchorDateEpochDay?.let(LocalDate::ofEpochDay) ?: clockTodayProvider(),
             )
         }
     }
 
     private fun updateAndPersistDraft(transform: (AddEditHabitUiState) -> AddEditHabitUiState) {
         _uiState.update { current ->
-            val updated = transform(current)
-            if (updated.isEditing) {
-                persistExistingHabitAsync(updated)
+            val transformed = transform(current)
+            if (transformed.isEditing) {
+                val dirty = if (isInitialLoadComplete) computeHasUnsavedChanges(transformed) else false
+                transformed.copy(hasUnsavedChanges = dirty)
             } else {
-                persistDraftAsync(updated)
+                persistDraftAsync(transformed)
+                transformed
             }
-            updated
         }
     }
 
-    private fun buildHabitFromState(state: AddEditHabitUiState): Habit {
+    private fun computeHasUnsavedChanges(state: AddEditHabitUiState): Boolean {
+        val snapshot = initialHabitSnapshot ?: return false
+        val latest = snapshot.latestSchedule
+        val hasIdentityChanged = state.title.trim() != snapshot.title.trim() ||
+            state.description.trim() != snapshot.description.trim() ||
+            state.selectedDomain.trim() != snapshot.domain.trim() ||
+            state.selectedColor.hex != snapshot.colorHex
+
+        val baselineTimes = latest.targetTimes.ifEmpty { AddEditHabitUiState.DEFAULT_TARGET_TIMES }
+        val hasReminderSettingsChanged =
+            state.skipReminderIfCompleted != snapshot.skipReminderIfCompleted ||
+                state.targetTimes.map { it.enabled } != baselineTimes.map { it.enabled }
+
+        val stagedSchedule = buildScheduleFromState(state)
+        val normalizedLatest = latest.copy(targetTimes = baselineTimes)
+        val hasScheduleOrTimesChanged = CadenceEvaluator.hasScheduleOrTimesChanged(normalizedLatest, stagedSchedule)
+
+        return hasIdentityChanged || hasReminderSettingsChanged || hasScheduleOrTimesChanged
+    }
+
+    private fun buildScheduleFromState(state: AddEditHabitUiState): HabitSchedule {
         val safeScheduledDays = state.scheduledDays.ifEmpty { DayOfWeek.entries.toSet() }
         val safeMonthlyDates = state.monthlyDates.ifEmpty { setOf(1) }
-        val rawHabit = Habit(
-            id = state.editingHabitId ?: 0L,
-            title = state.title.trim(),
-            description = state.description.trim(),
-            domain = state.selectedDomain.trim(),
-            subTag = existingSubTag,
-            colorHex = state.selectedColor.hex,
+        val safeTimes = state.targetTimes.ifEmpty { AddEditHabitUiState.DEFAULT_TARGET_TIMES }
+        return HabitSchedule(
+            id = 0L,
+            effectiveFrom = null,
             cadenceType = state.cadenceType,
             scheduledDays = safeScheduledDays,
             weeklyTargetMode = state.weeklyTargetMode,
@@ -261,40 +288,34 @@ class AddEditHabitViewModel(
             ordinalDayOfWeek = state.ordinalDayOfWeek,
             endOfMonthBehavior = state.endOfMonthBehavior,
             customArchetype = state.customArchetype,
-            customInterval = state.customInterval,
+            customInterval = state.customInterval.coerceAtLeast(1),
             customIntervalUnit = state.customIntervalUnit,
-            cycleDaysOn = state.cycleDaysOn,
-            cycleDaysOff = state.cycleDaysOff,
-            targetPerPeriod = state.targetPerPeriod,
-            targetTimes = state.targetTimes,
-            skipReminderIfCompleted = state.skipReminderIfCompleted,
-            timeOfDayBucket = TimeOfDayBucket.fromTimes(state.targetTimes),
-            sortOrder = existingSortOrder,
+            cycleDaysOn = state.cycleDaysOn.coerceAtLeast(1),
+            cycleDaysOff = state.cycleDaysOff.coerceAtLeast(0),
+            targetPerPeriod = state.targetPerPeriod.coerceAtLeast(safeTimes.size),
+            targetTimes = safeTimes,
+            timeOfDayBucket = TimeOfDayBucket.fromTimes(safeTimes),
             anchorDate = state.anchorDate,
-            createdAtEpochDay = existingCreatedEpochDay,
-            rescheduledFromDates = existingRescheduledFromDates,
-            rescheduledToDates = existingRescheduledToDates,
         )
-        val snapshot = initialHabitSnapshot
-        return if (snapshot != null && CadenceEvaluator.hasCadenceChanged(snapshot, rawHabit)) {
-            rawHabit.copy(
-                rescheduledFromDates = emptySet(),
-                rescheduledToDates = emptySet(),
-            )
-        } else {
-            CadenceEvaluator.sanitizeRescheduleOverrides(rawHabit)
-        }
     }
 
-    private fun persistExistingHabitAsync(state: AddEditHabitUiState) {
-        if (!state.isEditing || !isInitialLoadComplete || state.title.trim().isEmpty()) return
-        val habit = buildHabitFromState(state)
-        val previousJob = autosaveJob
-        autosaveJob = viewModelScope.launch {
-            previousJob?.cancelAndJoin()
-            val savedId = repository.saveHabit(habit)
-            reminderScheduler?.scheduleHabitReminders(habit.copy(id = savedId))
-        }
+    private fun buildNewHabitFromState(state: AddEditHabitUiState, today: LocalDate): Habit {
+        val baselineSchedule = buildScheduleFromState(state).copy(effectiveFrom = null)
+        return Habit(
+            id = 0L,
+            title = state.title.trim(),
+            description = state.description.trim(),
+            domain = state.selectedDomain.trim(),
+            subTag = null,
+            colorHex = state.selectedColor.hex,
+            skipReminderIfCompleted = state.skipReminderIfCompleted,
+            sortOrder = 0,
+            createdAtEpochDay = today.toEpochDay(),
+            rescheduledFromDates = emptySet(),
+            rescheduledToDates = emptySet(),
+            schedules = listOf(baselineSchedule),
+            pauseWindows = emptyList(),
+        )
     }
 
     private fun persistDraftAsync(state: AddEditHabitUiState) {
@@ -325,7 +346,7 @@ class AddEditHabitViewModel(
                     targetTimes = state.targetTimes,
                     skipReminderIfCompleted = state.skipReminderIfCompleted,
                     anchorDateEpochDay = state.anchorDate.toEpochDay(),
-                )
+                ),
             )
         }
     }
@@ -351,6 +372,11 @@ class AddEditHabitViewModel(
         if (trimmed.isNotEmpty()) {
             viewModelScope.launch {
                 repository.removeCustomDomain(trimmed)
+            }
+            initialHabitSnapshot?.let { snap ->
+                if (snap.domain.trim().equals(trimmed, ignoreCase = true)) {
+                    initialHabitSnapshot = snap.copy(domain = "")
+                }
             }
         }
         updateAndPersistDraft { state ->
@@ -391,9 +417,25 @@ class AddEditHabitViewModel(
                 }
                 else -> state.scheduledDays
             }
+            val adjustedAnchorDate = if (
+                state.isEditing &&
+                cadenceType == CadenceType.CUSTOM &&
+                state.cadenceType != CadenceType.CUSTOM &&
+                !hasUserPickedAnchorDate
+            ) {
+                val initialLatest = initialHabitSnapshot?.latestSchedule
+                if (initialLatest != null && initialLatest.cadenceType != CadenceType.CUSTOM) {
+                    clockTodayProvider()
+                } else {
+                    initialLatest?.anchorDate ?: state.anchorDate
+                }
+            } else {
+                state.anchorDate
+            }
             state.copy(
                 cadenceType = cadenceType,
                 scheduledDays = adjustedDays,
+                anchorDate = adjustedAnchorDate,
             )
         }
     }
@@ -476,6 +518,7 @@ class AddEditHabitViewModel(
     }
 
     fun selectCustomStartDate(date: LocalDate) {
+        hasUserPickedAnchorDate = true
         updateAndPersistDraft { it.copy(anchorDate = date) }
     }
 
@@ -558,63 +601,165 @@ class AddEditHabitViewModel(
 
     fun commitHabit() {
         val current = _uiState.value
+        if (current.isSaving) return
         val trimmedTitle = current.title.trim()
         if (trimmedTitle.isEmpty()) {
             _uiState.update { it.copy(titleError = true) }
             return
         }
 
+        if (!current.isEditing) {
+            viewModelScope.launch {
+                _uiState.update { it.copy(isSaving = true) }
+                draftSaveJob?.cancelAndJoin()
+                val today = clockTodayProvider()
+                val habit = buildNewHabitFromState(current, today)
+                val savedId = repository.saveHabit(habit)
+                reminderScheduler?.scheduleHabitReminders(habit.copy(id = savedId))
+                draftStore?.clearDraft()
+
+                val subtitle = cadenceCommittedSubtitle(habit.latestSchedule)
+                _uiState.update { it.copy(isSaving = false) }
+                _events.emit(AddEditHabitEvent.Committed(subtitle))
+            }
+            return
+        }
+
+        val id = editingHabitId ?: return
+        if (!current.hasUnsavedChanges) {
+            viewModelScope.launch {
+                _events.emit(AddEditHabitEvent.Committed("No changes"))
+            }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true) }
-            autosaveJob?.cancelAndJoin()
-            draftSaveJob?.cancelAndJoin()
-            val habit = buildHabitFromState(current)
-
-            val savedId = repository.saveHabit(habit)
-            reminderScheduler?.scheduleHabitReminders(habit.copy(id = savedId))
-            if (!current.isEditing) {
-                draftStore?.clearDraft()
+            val existing = repository.getHabitById(id) ?: initialHabitSnapshot
+            if (existing == null) {
+                _uiState.update { it.copy(isSaving = false) }
+                return@launch
             }
-
-            val subtitle = when (habit.cadenceType) {
-                CadenceType.DAILY -> "Daily cadence active"
-                CadenceType.WEEKLY -> "Weekly cadence active (${habit.scheduledDays.size}x/week)"
-                CadenceType.MONTHLY -> "Monthly cadence active"
-                CadenceType.CUSTOM -> "Custom cadence active"
+            val stagedSchedule = buildScheduleFromState(current)
+            val baselineLatest = existing.latestSchedule.let {
+                it.copy(targetTimes = it.targetTimes.ifEmpty { AddEditHabitUiState.DEFAULT_TARGET_TIMES })
             }
-            _uiState.update { it.copy(isSaving = false) }
+            val today = clockTodayProvider()
+
+            if (!CadenceEvaluator.hasScheduleOrTimesChanged(baselineLatest, stagedSchedule)) {
+                val updated = CadenceEvaluator.applyIdentityAndReminderOnlyEdit(
+                    existing = existing,
+                    updatedTitle = current.title,
+                    updatedDescription = current.description,
+                    updatedDomain = current.selectedDomain,
+                    updatedColorHex = current.selectedColor.hex,
+                    updatedSkipReminderIfCompleted = current.skipReminderIfCompleted,
+                    updatedTargetTimes = current.targetTimes,
+                    today = today,
+                )
+                val savedId = repository.saveHabit(updated)
+                reminderScheduler?.scheduleHabitReminders(updated.copy(id = savedId))
+                initialHabitSnapshot = updated.copy(id = savedId)
+                _uiState.update { it.copy(isSaving = false, hasUnsavedChanges = false) }
+                _events.emit(AddEditHabitEvent.Committed("Habit details updated"))
+            } else {
+                val completedToday = repository.getCompletedInstancesOn(id, today)
+                val effectiveDate = if (completedToday.isEmpty()) today else today.plusDays(1)
+                _uiState.update {
+                    it.copy(
+                        isSaving = false,
+                        pendingSaveScopeDialog = SaveScopeDialogState(
+                            futureEffectiveDate = effectiveDate,
+                            isEffectiveTomorrowBecauseCompletedToday = completedToday.isNotEmpty(),
+                            hasExistingScheduleHistory = existing.schedules.size > 1,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun confirmSaveWithScope(scope: HabitEditScope) {
+        val current = _uiState.value
+        if (current.isSaving || !current.isEditing) return
+        val id = editingHabitId ?: return
+        if (current.title.trim().isEmpty()) {
+            _uiState.update { it.copy(titleError = true, pendingSaveScopeDialog = null) }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true, pendingSaveScopeDialog = null) }
+            val existing = repository.getHabitById(id) ?: initialHabitSnapshot
+            if (existing == null) {
+                _uiState.update { it.copy(isSaving = false) }
+                return@launch
+            }
+            val today = clockTodayProvider()
+            val completedToday = repository.getCompletedInstancesOn(id, today)
+            val effectiveDate = if (completedToday.isEmpty()) today else today.plusDays(1)
+            val stagedSchedule = buildScheduleFromState(current)
+
+            val updated = CadenceEvaluator.applyScheduleEdit(
+                existing = existing,
+                updatedTitle = current.title,
+                updatedDescription = current.description,
+                updatedDomain = current.selectedDomain,
+                updatedColorHex = current.selectedColor.hex,
+                updatedSkipReminderIfCompleted = current.skipReminderIfCompleted,
+                updatedSchedule = stagedSchedule,
+                scope = scope,
+                effectiveFrom = effectiveDate,
+            )
+            val savedId = repository.saveHabit(updated)
+            reminderScheduler?.scheduleHabitReminders(updated.copy(id = savedId))
+            initialHabitSnapshot = updated.copy(id = savedId)
+
+            val dateFormatter = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
+            val subtitle = when (scope) {
+                HabitEditScope.FUTURE_ONLY -> "Updated from ${effectiveDate.format(dateFormatter)} onward"
+                HabitEditScope.ALL_OCCURRENCES -> "Updated all occurrences"
+            }
+            _uiState.update { it.copy(isSaving = false, hasUnsavedChanges = false) }
             _events.emit(AddEditHabitEvent.Committed(subtitle))
         }
     }
 
-    fun navigateBack(onExit: () -> Unit) {
+    fun dismissSaveScopeDialog() {
+        _uiState.update { it.copy(pendingSaveScopeDialog = null) }
+    }
+
+    fun requestNavigateBack(onExit: () -> Unit) {
         val current = _uiState.value
-        if (current.isEditing) {
-            viewModelScope.launch {
-                autosaveJob?.cancelAndJoin()
-                if (current.title.trim().isNotEmpty()) {
-                    val habit = buildHabitFromState(current)
-                    val savedId = repository.saveHabit(habit)
-                    reminderScheduler?.scheduleHabitReminders(habit.copy(id = savedId))
-                }
-                onExit()
-            }
+        if (current.isSaving) return
+        if (current.isEditing && current.hasUnsavedChanges) {
+            _uiState.update { it.copy(showUnsavedChangesDialog = true) }
         } else {
             onExit()
         }
     }
 
+    fun dismissUnsavedChangesDialog() {
+        _uiState.update { it.copy(showUnsavedChangesDialog = false) }
+    }
+
+    fun saveFromUnsavedChangesDialog() {
+        _uiState.update { it.copy(showUnsavedChangesDialog = false) }
+        commitHabit()
+    }
+
     fun discardDraftAndExit(onExit: () -> Unit) {
+        if (_uiState.value.isSaving) return
         viewModelScope.launch {
-            autosaveJob?.cancelAndJoin()
             draftSaveJob?.cancelAndJoin()
             if (editingHabitId == null) {
                 draftStore?.clearDraft()
             } else {
-                val initial = initialHabitSnapshot
-                if (initial != null) {
-                    val savedId = repository.saveHabit(initial)
-                    reminderScheduler?.scheduleHabitReminders(initial.copy(id = savedId))
+                _uiState.update {
+                    it.copy(
+                        pendingSaveScopeDialog = null,
+                        showUnsavedChangesDialog = false,
+                    )
                 }
             }
             onExit()
@@ -623,15 +768,24 @@ class AddEditHabitViewModel(
 
     fun deleteHabit() {
         val id = editingHabitId ?: return
+        if (_uiState.value.isSaving) return
         viewModelScope.launch {
-            autosaveJob?.cancelAndJoin()
+            _uiState.update { it.copy(isSaving = true) }
             val habit = repository.getHabitById(id)
             if (habit != null) {
                 reminderScheduler?.cancelHabitReminders(habit)
             }
             repository.deleteHabit(id)
+            _uiState.update { it.copy(isSaving = false) }
             _events.emit(AddEditHabitEvent.Deleted)
         }
+    }
+
+    private fun cadenceCommittedSubtitle(schedule: HabitSchedule): String = when (schedule.cadenceType) {
+        CadenceType.DAILY -> "Daily cadence active"
+        CadenceType.WEEKLY -> "Weekly cadence active (${schedule.scheduledDays.size}x/week)"
+        CadenceType.MONTHLY -> "Monthly cadence active"
+        CadenceType.CUSTOM -> "Custom cadence active"
     }
 
     class Factory(

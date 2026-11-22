@@ -10,34 +10,89 @@ import com.rhythm.habittracker.data.local.entity.CustomDomainEntity
 import com.rhythm.habittracker.data.local.entity.DashboardPreferencesEntity
 import com.rhythm.habittracker.data.local.entity.HabitCompletionEntity
 import com.rhythm.habittracker.data.local.entity.HabitEntity
+import com.rhythm.habittracker.data.local.entity.HabitPauseEntity
+import com.rhythm.habittracker.data.local.entity.HabitScheduleEntity
+import com.rhythm.habittracker.data.local.entity.HabitWithDetails
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface HabitDao {
 
+    @Transaction
     @Query("SELECT * FROM habits ORDER BY sortOrder ASC, id ASC")
-    fun observeHabits(): Flow<List<HabitEntity>>
+    fun observeHabitsWithDetails(): Flow<List<HabitWithDetails>>
+
+    @Transaction
+    @Query("SELECT * FROM habits ORDER BY sortOrder ASC, id ASC")
+    suspend fun getAllHabitsWithDetails(): List<HabitWithDetails>
+
+    @Transaction
+    @Query("SELECT * FROM habits WHERE id = :habitId LIMIT 1")
+    suspend fun getHabitWithDetailsById(habitId: Long): HabitWithDetails?
 
     @Query("SELECT * FROM habits ORDER BY sortOrder ASC, id ASC")
     suspend fun getAllHabits(): List<HabitEntity>
 
-    @Query("SELECT * FROM habits WHERE id = :habitId LIMIT 1")
-    suspend fun getHabitById(habitId: Long): HabitEntity?
-
     @Query("SELECT COUNT(*) FROM habits")
     suspend fun getHabitCount(): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertHabit(habit: HabitEntity): Long
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertHabits(habits: List<HabitEntity>): List<Long>
 
     @Update
     suspend fun updateHabit(habit: HabitEntity)
 
+    @Query("UPDATE habits SET rescheduledFromEpochDaysCsv = :fromCsv, rescheduledToEpochDaysCsv = :toCsv WHERE id = :habitId")
+    suspend fun updateRescheduleOverrides(habitId: Long, fromCsv: String, toCsv: String)
+
     @Query("DELETE FROM habits WHERE id = :habitId")
     suspend fun deleteHabitById(habitId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertSchedules(schedules: List<HabitScheduleEntity>)
+
+    @Query("DELETE FROM habit_schedules WHERE habitId = :habitId")
+    suspend fun deleteSchedulesForHabit(habitId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertPauses(pauses: List<HabitPauseEntity>)
+
+    @Query("DELETE FROM habit_pauses WHERE habitId = :habitId")
+    suspend fun deletePausesForHabit(habitId: Long)
+
+    @Transaction
+    suspend fun upsertHabitWithDetails(
+        habit: HabitEntity,
+        schedules: List<HabitScheduleEntity>,
+        pauses: List<HabitPauseEntity>,
+    ): Long {
+        val savedId = if (habit.id == 0L) {
+            insertHabit(habit)
+        } else {
+            updateHabit(habit)
+            habit.id
+        }
+        deleteSchedulesForHabit(savedId)
+        if (schedules.isNotEmpty()) {
+            insertSchedules(schedules.map { it.copy(id = 0L, habitId = savedId) })
+        }
+        deletePausesForHabit(savedId)
+        if (pauses.isNotEmpty()) {
+            insertPauses(pauses.map { it.copy(id = 0L, habitId = savedId) })
+        }
+        return savedId
+    }
+
+    @Transaction
+    suspend fun replacePausesForHabit(
+        habitId: Long,
+        pauses: List<HabitPauseEntity>,
+    ) {
+        deletePausesForHabit(habitId)
+        if (pauses.isNotEmpty()) {
+            insertPauses(pauses.map { it.copy(id = 0L, habitId = habitId) })
+        }
+    }
 
     @Query("SELECT * FROM habit_completions")
     fun observeAllCompletions(): Flow<List<HabitCompletionEntity>>
@@ -51,27 +106,38 @@ interface HabitDao {
     @Query("SELECT * FROM habit_completions WHERE habitId = :habitId AND dateEpochDay = :epochDay")
     suspend fun getCompletionsForHabitOnDate(habitId: Long, epochDay: Long): List<HabitCompletionEntity>
 
+    @Query("SELECT * FROM habit_completions WHERE habitId = :habitId AND dateEpochDay BETWEEN :startEpochDay AND :endEpochDay")
+    suspend fun getCompletionsForHabitInRange(
+        habitId: Long,
+        startEpochDay: Long,
+        endEpochDay: Long,
+    ): List<HabitCompletionEntity>
+
     @Transaction
-    suspend fun updateHabitAndClearCompletionsForDates(
-        habit: HabitEntity,
+    suspend fun updateRescheduleAndClearCompletionsForDates(
+        habitId: Long,
+        fromCsv: String,
+        toCsv: String,
         fromEpochDay: Long,
         toEpochDay: Long,
     ) {
-        updateHabit(habit)
-        deleteCompletion(habit.id, fromEpochDay)
-        deleteCompletion(habit.id, toEpochDay)
+        updateRescheduleOverrides(habitId, fromCsv, toCsv)
+        deleteCompletion(habitId, fromEpochDay)
+        deleteCompletion(habitId, toEpochDay)
     }
 
     @Transaction
-    suspend fun restoreHabitAndCompletionsForDates(
-        habit: HabitEntity,
+    suspend fun restoreRescheduleAndCompletionsForDates(
+        habitId: Long,
+        fromCsv: String,
+        toCsv: String,
         fromEpochDay: Long,
         toEpochDay: Long,
         restoredCompletionsOnFromDate: List<HabitCompletionEntity>,
     ) {
-        updateHabit(habit)
-        deleteCompletion(habit.id, fromEpochDay)
-        deleteCompletion(habit.id, toEpochDay)
+        updateRescheduleOverrides(habitId, fromCsv, toCsv)
+        deleteCompletion(habitId, fromEpochDay)
+        deleteCompletion(habitId, toEpochDay)
         if (restoredCompletionsOnFromDate.isNotEmpty()) {
             insertCompletions(restoredCompletionsOnFromDate)
         }

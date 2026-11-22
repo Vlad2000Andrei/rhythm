@@ -119,7 +119,7 @@ object RhythmWidgetUpdater {
         context: Context,
     ): Pair<List<Habit>, Map<LocalDate, Map<Long, Set<Int>>>> {
         val dao = HabitDatabase.getInstance(context).habitDao()
-        val habits = dao.getAllHabits().map { it.toDomain() }
+        val habits = dao.getAllHabitsWithDetails().map { it.toDomain() }
         val completions = dao.getAllCompletions()
         val byDate = completions
             .groupBy { LocalDate.ofEpochDay(it.dateEpochDay) }

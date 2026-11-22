@@ -94,6 +94,7 @@ flowchart TD
         Dash --> Filters["DomainFilterRow\n(All Habits / Mind / Health / Focus + Sort Cycler)"]
         Dash --> Pending["HabitCard (Pending Section -> HabitDetail)"]
         Dash --> Completed["HabitCard (Completed Section -> HabitDetail)"]
+        Dash --> PausedStrip["Collapsible PAUSED TODAY (N) Section (PausedHabitCard)"]
         Dash --> Momentum["MomentumInsightFooter"]
         Dash --> ExpandFab["ExpandableDashboardFab\n(Add Habit / All Habits)"]
     end
@@ -101,21 +102,22 @@ flowchart TD
     subgraph AllHabitsTree["AllHabitsScreen Component Tree"]
         All --> AllTop["AllHabitsTopBar"]
         All --> InvStats["SystemInventoryHeader\n(Total / Mean Streak / Completion %)"]
-        All --> QueryTools["HabitSearchBar + Domain Count Chips"]
-        All --> Feed["AllHabitCard Feed (Tap -> Detail, Edit -> Edit) / ZeroCadencesFoundCard"]
+        All --> QueryTools["HabitSearchBar (supports 'paused') + Domain Count Chips"]
+        All --> Feed["AllHabitCard Feed (w/ Pause Badges) / ZeroCadencesFoundCard"]
     end
 
     subgraph HabitDetailTree["HabitDetailScreen Component Tree"]
         Detail --> DetTop["HabitDetailTopBar"]
-        Detail --> Overview["HabitOverviewCard\n(Current / Best / Rate Metrics)"]
-        Detail --> DetMatrix["HabitCompletionMatrixCard\n(20-Week Accent-Tinted Matrix)"]
-        Detail --> TargetRo["TargetScheduleReadOnlyCard"]
-        Detail --> RecentRun["RecentRunWeekCard (7-Day Strip)"]
+        Detail --> Overview["HabitOverviewCard\n(PAUSED / ACTIVE CADENCE Badge + Current / Best / Rate)"]
+        Detail --> PauseCard["PauseStatusCard + PauseHabitDialog\n(Pixel-Clock Date Range & Early Resume)"]
+        Detail --> DetMatrix["HabitCompletionMatrixCard\n(20-Week Accent Matrix w/ '||' Pause Bars)"]
+        Detail --> TargetRo["TargetScheduleReadOnlyCard\n('STARTS TOMORROW' & 'MUTED' Slot Badges)"]
+        Detail --> RecentRun["RecentRunWeekCard (7-Day Strip w/ Pause Marks)"]
         Detail --> EditCta["Edit Habit Button -> AddEditHabitScreen"]
     end
 
     subgraph AddEditTree["AddEditHabitScreen Component Tree"]
-        AddEdit --> Header["AddEditTopHeader\n(Back + RhythmBrandMark + ARCHITECT / DRAFT AUTOSAVED)"]
+        AddEdit --> Header["AddEditTopHeader\n(Back + RhythmBrandMark + DRAFT AUTOSAVED / UNSAVED CHANGES / UP TO DATE)"]
         AddEdit --> Identity["IdentityAndSignatureCard\n(Title 0/48 + Description + Domain FlowRow w/ Delete Confirm + 7 Color Swatches)"]
         AddEdit --> Engine["CadenceEngineCard\n(4-Way Segmented Switcher)"]
         Engine --> C1["DailyCadenceBody"]
@@ -123,7 +125,7 @@ flowchart TD
         Engine --> C3["MonthlyCadenceBody\n(Specific Dates 1..31 Grid / Ordinal Picker + EOM Rules)"]
         Engine --> C4["CustomCadenceBody\n(Interval / Weekly / Cycle Steppers + Start Date Picker + 30-Day Projection)"]
         AddEdit --> Times["TargetTimesCard\n(TimePicker Cues + RhythmTactileSwitch + Skip Toggle)"]
-        AddEdit --> Footer["FooterActionsSection\n(Discard / Commit Habit / Delete Habit)"]
+        AddEdit --> Footer["FooterActionsSection + Modals\n(SaveScopeDialog & UnsavedChangesDialog)"]
     end
 ```
 
@@ -135,7 +137,7 @@ flowchart TD
 - **`RhythmBrandMark`**: `2x2` Swiss geometric cadence grid rendered on a `RhythmDeepGraphite` rounded square (`32.dp` on Dashboard, `24.dp` on Add/Edit header).
 - **`RhythmProfileAvatar`**: Circular `32.dp` action button opening the overall **Habit Architecture Summary** modal on the Dashboard or the **Habit Architect Spec** modal on the Add/Edit screen.
 - **`RhythmTactileSwitch`**: Custom spring-animated pill toggle (`42.dp` $\times$ `24.dp`) with optional embedded notification bell icon (`showBellIcon = true`) used in the `TargetTimesCard`.
-- **`RhythmMatrixCell` & `rhythmMatrixCellColor`**: Shared completion matrix square and color-scaling helper used by `DashboardScreen` (32-week horizontally past-scrollable grid anchored on the current week at the right edge, with fixed `M, T, W, T, F, S, S` day-initial axis on the left and rendered in `ConsistencyEmerald`), `HabitDetailScreen` (20-week grid in the habit's `HabitAccentColor`), and future completion grids. Scales fill intensity continuously from `emptyColor` (`completionRatio == 0f`) through proportionally interpolated tint (`0.24f + 0.52f * completionRatio`) up to full `activeColor` (`completionRatio >= 1f`, all scheduled tasks done), and draws a symmetric grey `X` via `drawWithContent` with `StrokeCap.Round` when `isUnscheduledEmpty` is true (zero scheduled tasks and uncompleted) so unscheduled rest days stay visually distinct from missed scheduled days.
+- **`RhythmMatrixCell` & `rhythmMatrixCellColor`**: Shared completion matrix square and color-scaling helper used by `DashboardScreen` (32-week horizontally past-scrollable grid anchored on the current week at the right edge, with fixed `M, T, W, T, F, S, S` day-initial axis on the left and rendered in `ConsistencyEmerald`), `HabitDetailScreen` (20-week grid in the habit's `HabitAccentColor`), and future completion grids. Scales fill intensity continuously from `emptyColor` (`completionRatio == 0f`) through proportionally interpolated tint (`0.24f + 0.52f * completionRatio`) up to full `activeColor` (`completionRatio >= 1f`), draws subtle `||` pause bars when `isPausedEmpty` is true, and draws a symmetric grey `X` via `drawWithContent` with `StrokeCap.Round` when `isUnscheduledEmpty` is true so paused days, rest days, and missed scheduled days stay visually distinct.
 - **`RhythmConfettiOverlay`**: Non-interactive physics-driven `Canvas` confetti burst (ribbons, geometric squares, and circles in the 7 `HabitAccentColor` hues + `ConsistencyEmerald`) triggered on the Dashboard when the user completes the final scheduled habit instance of a day.
 
 ---
@@ -148,28 +150,33 @@ flowchart TD
   - Tapping a `HabitCard` on the Dashboard navigates to `HabitDetailRoute(habitId)` rather than directly to the editor; editing is launched via the bottom **Edit Habit** button on `HabitDetailScreen` (or the per-card **EDIT** button on `AllHabitsScreen`). All Dashboard `HabitCard` items display their scheduled time pill (combining instance progress like `1/2 · 08:00 AM` when a habit has multiple occurrences per day).
 - **Dashboard List & Telemetry ([`DashboardScreen.kt`](../app/src/main/kotlin/com/rhythm/habittracker/ui/dashboard/DashboardScreen.kt))**:
   - **Cancelable Bouncy Prismatic Checking Wave Animation**: Tapping an uncompleted `HabitCard` checkbox runs a ~`1.17s` (`1050ms` wave sweep + `120ms` settle) celebratory sequence (`waveJob`) before calling `onToggleHabit(habit.id, instanceIndex, cardDate)` and reordering: both the entire card (`0.94f -> 1.045f -> 1.0f`) and checkbox (`0.78f -> 1.38f -> 1.0f`) squish and spring-bounce with high-bouncy physics while `Modifier.drawWithContent` renders a multi-tone aurora wash, three staggered prismatic radial waves (`WaveColorPalette`), ten fizzing color orbs, and a glowing gradient card border anchored in the card's `HabitAccentColor`. Tapping the checkbox again mid-wave or starting a horizontal swipe immediately cancels `waveJob` and resets wave visuals without toggling completion; external completion (`LaunchedEffect(item.isCompleted, selectedDate)`) also cancels any active wave.
-  - **Cancelable Swipe-to-Reschedule (`RescheduleHabitDialog`) & Undo Banner**: `HabitCard` uses stationary-coordinate `detectHorizontalDragGestures` with a positional `96.dp` threshold (capped at `148.dp` raw drag with `0.48f` rubber-band damping beyond threshold and no velocity-fling dismissal). Dragging reveals `"SWIPE TO RESCHEDULE"` -> `"RELEASE TO RESCHEDULE"`; sliding back below threshold or canceling the gesture springs back cleanly without opening the modal. Releasing past threshold opens `RescheduleHabitDialog` backed by a live `reschedulingTarget` lookup, with quick-shift chips (`Tomorrow`, `+2 Days`, `Next Week`) and a full month calendar grid where scheduled dates (`CadenceEvaluator.isHabitScheduledOn`) show an accent dot, display a conflict warning, and disable `Reschedule`. Confirming displays a 4.5-second floating bottom **UNDO** banner (`RescheduleBanner`) that atomically reverts the shift and any cleared completions.
+  - **Cancelable Swipe-to-Reschedule (`RescheduleHabitDialog`) & Undo Banner**: `HabitCard` uses stationary-coordinate `detectHorizontalDragGestures` with a positional `96.dp` threshold (capped at `148.dp` raw drag with `0.48f` rubber-band damping beyond threshold and no velocity-fling dismissal). Dragging reveals `"SWIPE TO RESCHEDULE"` -> `"RELEASE TO RESCHEDULE"`; sliding back below threshold or canceling the gesture springs back cleanly without opening the modal. Releasing past threshold opens `RescheduleHabitDialog` backed by a live `reschedulingTarget` lookup, with quick-shift chips (`Tomorrow`, `+2 Days`, `Next Week`) and a full month calendar grid that highlights scheduled dates AND paused dates (`habit.isPausedOn(date)`), blocking confirmation when the target date is already scheduled or paused. Confirming displays a 4.5-second floating bottom **UNDO** banner (`RescheduleBanner`) that atomically reverts the shift and any cleared completions.
+  - **Paused Habits Section & Empty-Day Pause State**: `DashboardScreen` renders a collapsible `PAUSED TODAY (N)` / `PAUSED (N)` strip of `PausedHabitCard` items (`"Paused until ... · Resumes ..."`) linking directly to `HabitDetailScreen` for quick early resume; when all habits on a date are paused, `EmptyDayCard` displays `"ALL SCHEDULED HABITS PAUSED"`.
+  - **All Habits Pause Badges & Filtering ([`AllHabitsScreen.kt`](../app/src/main/kotlin/com/rhythm/habittracker/ui/allhabits/AllHabitsScreen.kt))**: `AllHabitCard` shows active or upcoming pause badges (`PAUSED UNTIL ...` / `PAUSES ...`) and `AllHabitsViewModel` matches `"paused"` queries in the live search bar.
+  - **Habit Detail Pixel-Clock Pause Card & Date-Scoped Indicators ([`HabitDetailScreen.kt`](../app/src/main/kotlin/com/rhythm/habittracker/ui/habitdetail/HabitDetailScreen.kt))**: Displays a `"PAUSED"` vs. `"ACTIVE CADENCE"` badge in `HabitOverviewCard`, `PauseStatusCard` + `PauseHabitDialog` (Pixel-Clock style inclusive start/end date pickers with duration/resume preview and early resume/cancel actions), a `"STARTS TOMORROW"` badge on `TargetScheduleReadOnlyCard` when a `"Future occurrences only"` schedule takes effect tomorrow, `"MUTED"` badges on disabled reminder slots, and pause marks in `RecentRunWeekCard` and the 20-week `RhythmMatrixCell` grid.
   - Date-scoped `LazyColumn` item keys (`"habit_${uiState.selectedDate}_${it.habit.id}_${it.instanceIndex}"`) paired with medium-bouncy, low-stiffness `Modifier.animateItem` spring placement (`Spring.DampingRatioMediumBouncy`, `Spring.StiffnessLow`) so checking/unchecking a habit or changing sort modes glides cards smoothly without leaking animation state across selected dates.
-  - Spring-bounced checkbox completion scale + `AnimatedVisibility` checkmark icon, haptic feedback, odometer-style `AnimatedContent` counters, spring-interpolated bucket progress bars (turning `ConsistencyEmerald` at 100%), task-relative `RhythmMatrixCell` heatmap squares (scaling proportionally with `completedCount / scheduledCount` and showing a symmetric grey `X` on unscheduled empty days), and celebratory `RhythmConfettiOverlay` upon completing the last task of the day.
-- **Cadence Engine & Architect Modals ([`AddEditHabitScreen.kt`](../app/src/main/kotlin/com/rhythm/habittracker/ui/addhabit/AddEditHabitScreen.kt))**:
+  - Spring-bounced checkbox completion scale + `AnimatedVisibility` checkmark icon, haptic feedback, odometer-style `AnimatedContent` counters, spring-interpolated bucket progress bars (turning `ConsistencyEmerald` at 100%), task-relative `RhythmMatrixCell` heatmap squares (scaling proportionally with `completedCount / scheduledCount`, showing `||` pause bars on paused empty days and a symmetric grey `X` on unscheduled empty days), and celebratory `RhythmConfettiOverlay` upon completing the last task of the day.
+- **Cadence Engine, Staged Edits & Architect Modals ([`AddEditHabitScreen.kt`](../app/src/main/kotlin/com/rhythm/habittracker/ui/addhabit/AddEditHabitScreen.kt))**:
+  - Header status pill displays `DRAFT AUTOSAVED` when creating a new habit and `UNSAVED CHANGES` / `UP TO DATE` when editing an existing habit.
+  - **`SaveScopeDialog` & `UnsavedChangesDialog`**: Tapping **Save Changes** when schedule rules, `dailyTargetCount`, or target times changed opens `SaveScopeDialog` (`"Future occurrences only"` Recommended vs. `"All occurrences"`), displaying the smart cutoff date (today or tomorrow if already completed today). Pressing Back with staged changes opens `UnsavedChangesDialog` (*Save Changes / Discard Changes / Keep Editing*).
   - Directional `AnimatedContent` + `animateContentSize` when switching between `DAILY`, `WEEKLY`, `MONTHLY`, and `CUSTOM` tabs or adding/removing target time slots.
-  - **Custom Cadence Start Date Picker**: `CustomCadenceBody` includes a clickable **Start Date** row opening a Material 3 `DatePickerDialog` to anchor interval, cycle, and custom-weekly habits on any date (updating the 30-day projection matrix immediately).
+  - **Custom Cadence Start Date Picker**: `CustomCadenceBody` includes a clickable **Start Date** row opening a Material 3 `DatePickerDialog` to anchor interval, cycle, and custom-weekly habits on any date (defaulting `anchorDate` to `today` when switching a non-`CUSTOM` existing habit into `CUSTOM`).
   - **Domain Deletion Confirmation Modal**: Tapping the `×` icon on any Domain/Tag chip opens a confirmation `AlertDialog` before removing the domain from `custom_domains` and clearing it from assigned habits.
 
 ---
 
 ## Android Home Screen Widgets ([`widget/`](../app/src/main/kotlin/com/rhythm/habittracker/widget/WidgetBitmapRenderer.kt))
 
-All three home screen widgets adapt smoothly across arbitrary resized cell bounds (covering Tall `2×4`, Wide `4×2` / `4×3`, Square `4×4`, and intermediate dimensions) and share consistent typography (`Inter` + `JetBrains Mono`), completion-relative matrix intensity, and symmetric grey `X` markers on unscheduled rest days:
+All three home screen widgets adapt smoothly across arbitrary resized cell bounds (covering Tall `2×4`, Wide `4×2` / `4×3`, Square `4×4`, and intermediate dimensions) and share consistent typography (`Inter` + `JetBrains Mono`), completion-relative matrix intensity, `||` pause bars on paused empty days, and symmetric grey `X` markers on unscheduled rest days:
 
 1. **Habit Cadence Matrix (`HabitCadenceWidgetProvider`)**:
-   - Displays a user-selected habit's streak flame badge, domain/sub-tag indicator, consistency rate, primary target time, responsive multi-week accent-colored completion matrix (with all `M–S` weekday labels), and today's status.
+   - Displays a user-selected habit's streak flame badge, domain/sub-tag indicator, consistency rate, primary target time, responsive multi-week accent-colored completion matrix (with all `M–S` weekday labels), and today's date-scoped status (including paused/resumes status when paused).
    - Tapping launches [`MainActivity`](../app/src/main/kotlin/com/rhythm/habittracker/MainActivity.kt) directly to that habit's `HabitDetailRoute` via `EXTRA_OPEN_HABIT_ID`.
 2. **Overall Cadence Matrix (`OverallCadenceWidgetProvider`)**:
    - Displays Morning/Afternoon/Evening daily progress bars (stacked on narrow tall widgets, 3-card row on wide/square widgets), overall consistency %, streak + monthly completions summary, responsive emerald cadence matrix with month headers and `M–S` initials, and the next scheduled task. Tapping opens the Dashboard.
 3. **Upcoming Tasks (`UpcomingTasksWidgetProvider`)**:
-   - Displays today's date/completion pill, a multi-color segmented progress bar colored by completed habit accents, an ordered task checklist (pending tasks with a `NOW` pill sorted by time above completed items), and a footer summary.
-   - Built with piecewise `RemoteViews` (`widget_upcoming_tasks.xml`) so tapping any task row directly toggles that `(habitId, instanceIndex)` completion in Room (`ACTION_TOGGLE_TASK`) and refreshes all widgets in place without opening the app.
+   - Displays today's date/completion pill, a multi-color segmented progress bar colored by completed habit accents, an ordered date-scoped task checklist (pending tasks with a `NOW` pill sorted by time above completed items), and a footer summary.
+   - Built with piecewise `RemoteViews` (`widget_upcoming_tasks.xml`) so tapping any task row directly toggles that `(habitId, instanceIndex)` completion in Room (`ACTION_TOGGLE_TASK`) while guarding against toggling uncompleted tasks on paused habits, and refreshes all widgets in place without opening the app.
 4. **Reconfigurable Settings (`WidgetConfigActivity`)**:
    - All 3 widgets declare `android:widgetFeatures="reconfigurable"` and launch `WidgetConfigActivity`, offering a live size-tab preview (`2×4 Tall`, `4×2 / 4×3`, `4×4 Square`), **Light Mode** vs. **Dark Mode** surface switching for every widget, and an interactive **Target Habit** selector for the Single-Habit widget.
 5. **Android Widget Picker Previews (`previewLayout` + `previewImage`)**:

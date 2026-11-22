@@ -6,10 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.rhythm.habittracker.data.HabitRepository
 import com.rhythm.habittracker.domain.CadenceEvaluator
 import com.rhythm.habittracker.domain.model.Habit
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
+import com.rhythm.habittracker.reminders.ReminderScheduler
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -23,6 +26,7 @@ data class HabitDetailMatrixCell(
     val completedCount: Int,
     val isFuture: Boolean,
     val isToday: Boolean,
+    val isPaused: Boolean = false,
 ) {
     val isScheduled: Boolean
         get() = scheduledCount > 0
@@ -35,8 +39,11 @@ data class HabitDetailMatrixCell(
             else -> 0f
         }
 
+    val isPausedEmpty: Boolean
+        get() = isPaused && !isScheduled && (isFuture || completedCount <= 0)
+
     val isUnscheduledEmpty: Boolean
-        get() = !isScheduled && (isFuture || completedCount <= 0)
+        get() = !isPausedEmpty && !isScheduled && (isFuture || completedCount <= 0)
 }
 
 data class HabitWeekDayStatus(
@@ -47,6 +54,7 @@ data class HabitWeekDayStatus(
     val isFuture: Boolean,
     val isCompleted: Boolean,
     val isScheduled: Boolean,
+    val isPaused: Boolean = false,
 )
 
 data class HabitDetailUiState(
@@ -67,11 +75,16 @@ data class HabitDetailUiState(
     val recentWeekDays: List<HabitWeekDayStatus> = emptyList(),
     val completedThisWeek: Int = 0,
     val scheduledThisWeek: Int = 0,
+    val activePause: HabitPauseWindow? = null,
+    val upcomingPauses: List<HabitPauseWindow> = emptyList(),
+    val isCompletedToday: Boolean = false,
+    val effectiveTomorrowNotice: Boolean = false,
 )
 
 class HabitDetailViewModel(
     private val habitId: Long,
     private val repository: HabitRepository,
+    private val reminderScheduler: ReminderScheduler? = null,
     private val clockTodayProvider: () -> LocalDate = { LocalDate.now() },
 ) : ViewModel() {
 
@@ -90,6 +103,38 @@ class HabitDetailViewModel(
         initialValue = HabitDetailUiState(isLoading = true),
     )
 
+    fun pauseHabit(
+        startDate: LocalDate,
+        endDate: LocalDate,
+        editingWindowId: Long? = null,
+    ) {
+        if (endDate.isBefore(startDate)) return
+        viewModelScope.launch {
+            val updated = repository.pauseHabit(
+                habitId = habitId,
+                startDate = startDate,
+                endDate = endDate,
+                editingWindowId = editingWindowId,
+            )
+            if (updated != null) {
+                reminderScheduler?.scheduleHabitReminders(updated)
+            }
+        }
+    }
+
+    fun resumeOrCancelPause() {
+        val today = clockTodayProvider()
+        viewModelScope.launch {
+            val updated = repository.resumeOrCancelPause(
+                habitId = habitId,
+                today = today,
+            )
+            if (updated != null) {
+                reminderScheduler?.scheduleHabitReminders(updated)
+            }
+        }
+    }
+
     private fun buildUiState(
         habits: List<Habit>,
         completedInstancesByDate: Map<LocalDate, Map<Long, Set<Int>>>,
@@ -101,7 +146,8 @@ class HabitDetailViewModel(
         val fullyCompletedDates = buildSet<LocalDate> {
             completedInstancesByDate.forEach { (date, habitMap) ->
                 val instances = habitMap[habit.id].orEmpty()
-                if (instances.size >= habit.dailyTargetCount) {
+                val target = habit.scheduleForDate(date).dailyTargetCount
+                if (instances.size >= target) {
                     add(date)
                 }
             }
@@ -170,6 +216,7 @@ class HabitDetailViewModel(
                     completedCount = cell.completedCount,
                     isFuture = cell.isFuture,
                     isToday = cell.date == today,
+                    isPaused = cell.isPaused,
                 )
             }
         }
@@ -197,17 +244,29 @@ class HabitDetailViewModel(
                 isFuture = date.isAfter(today),
                 isCompleted = date in fullyCompletedDates,
                 isScheduled = CadenceEvaluator.isHabitScheduledOn(habit, date),
+                isPaused = habit.isPausedOn(date),
             )
         }
         val completedThisWeek = recentWeekDays.count { it.isCompleted }
-        val scheduledThisWeek = maxOf(completedThisWeek, recentWeekDays.count { it.isScheduled })
+        val activeTodaySchedule = habit.scheduleForDate(today)
+        val scheduledThisWeek = if (activeTodaySchedule.isFlexibleWeeklyPool) {
+            maxOf(
+                completedThisWeek,
+                CadenceEvaluator.flexiblePoolDueTargetForWeek(habit, currentWeekMonday, today),
+            )
+        } else {
+            maxOf(completedThisWeek, recentWeekDays.count { it.isScheduled })
+        }
 
-        val cadenceLabelUpper = habit.cadenceType.label.uppercase(Locale.ENGLISH)
-        val cadenceBadgeLabel = if (habit.dailyTargetCount > 1) {
-            "${habit.dailyTargetCount}X $cadenceLabelUpper"
+        val latestSchedule = habit.latestSchedule
+        val cadenceLabelUpper = latestSchedule.cadenceType.label.uppercase(Locale.ENGLISH)
+        val cadenceBadgeLabel = if (latestSchedule.dailyTargetCount > 1) {
+            "${latestSchedule.dailyTargetCount}X $cadenceLabelUpper"
         } else {
             cadenceLabelUpper
         }
+        val isCompletedToday = completedInstancesByDate[today]?.get(habit.id).orEmpty().isNotEmpty()
+        val effectiveTomorrowNotice = latestSchedule.effectiveFrom?.isAfter(today) == true
 
         return HabitDetailUiState(
             isLoading = false,
@@ -223,20 +282,29 @@ class HabitDetailViewModel(
             recentSkips = recentSkips,
             cadenceDisciplineLabel = "$cadenceLabelUpper DISCIPLINE",
             cadenceBadgeLabel = cadenceBadgeLabel,
-            scheduleShortLabel = CadenceEvaluator.formatHabitScheduleSummary(habit),
+            scheduleShortLabel = CadenceEvaluator.formatHabitScheduleSummary(latestSchedule),
             recentWeekDays = recentWeekDays,
             completedThisWeek = completedThisWeek,
             scheduledThisWeek = scheduledThisWeek,
+            activePause = habit.activePause(today),
+            upcomingPauses = habit.upcomingPauses(today),
+            isCompletedToday = isCompletedToday,
+            effectiveTomorrowNotice = effectiveTomorrowNotice,
         )
     }
 
     class Factory(
         private val habitId: Long,
         private val repository: HabitRepository,
+        private val reminderScheduler: ReminderScheduler? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return HabitDetailViewModel(habitId = habitId, repository = repository) as T
+            return HabitDetailViewModel(
+                habitId = habitId,
+                repository = repository,
+                reminderScheduler = reminderScheduler,
+            ) as T
         }
     }
 }

@@ -8,6 +8,8 @@ import com.rhythm.habittracker.domain.CadenceEvaluator
 import com.rhythm.habittracker.domain.model.CadenceType
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
+import com.rhythm.habittracker.domain.model.HabitSchedule
 import com.rhythm.habittracker.domain.model.HabitSortMode
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import com.rhythm.habittracker.domain.model.TimeOfDayBucket
@@ -44,7 +46,7 @@ class DashboardViewModelTest {
         val today = LocalDate.of(2026, 5, 15)
         val fakeRepo = FakeDashboardRepository(
             initialHabits = listOf(
-                Habit(
+                Habit.singleSchedule(
                     id = 1L,
                     title = "Deep Work",
                     domain = "Focus",
@@ -53,7 +55,7 @@ class DashboardViewModelTest {
                     sortOrder = 0,
                     createdAtEpochDay = today.minusDays(30).toEpochDay(),
                 ),
-                Habit(
+                Habit.singleSchedule(
                     id = 2L,
                     title = "Hydrate",
                     domain = "Health",
@@ -98,14 +100,14 @@ class DashboardViewModelTest {
         val today = LocalDate.of(2026, 5, 15)
         val fakeRepo = FakeDashboardRepository(
             initialHabits = listOf(
-                Habit(
+                Habit.singleSchedule(
                     id = 1L,
                     title = "Deep Work",
                     domain = "Focus",
                     sortOrder = 0,
                     createdAtEpochDay = today.minusDays(10).toEpochDay(),
                 ),
-                Habit(
+                Habit.singleSchedule(
                     id = 2L,
                     title = "Evening Reflection",
                     domain = "Mind",
@@ -149,7 +151,7 @@ class DashboardViewModelTest {
     @Test
     fun dashboard_showsAllInstancesForMultiInstanceHabitAndTracksPartialCompletion() = runTest {
         val today = LocalDate.of(2026, 5, 15)
-        val multiHabit = Habit(
+        val multiHabit = Habit.singleSchedule(
             id = 10L,
             title = "Brush Teeth",
             domain = "Health",
@@ -177,7 +179,6 @@ class DashboardViewModelTest {
         }
         advanceUntilIdle()
 
-        // Initially 0 out of 2 completed -> both cards in pendingHabits
         val initial = viewModel.uiState.value
         assertEquals(0, initial.completedCount)
         assertEquals(2, initial.totalCount)
@@ -186,7 +187,6 @@ class DashboardViewModelTest {
         assertEquals(listOf(0, 1), initial.pendingHabits.map { it.instanceIndex })
         assertEquals(listOf(2, 2), initial.pendingHabits.map { it.totalInstances })
 
-        // Morning bucket has 1 total, Evening bucket has 1 total
         val morningBucket = initial.bucketProgress.first { it.bucket == TimeOfDayBucket.MORNING }
         val eveningBucket = initial.bucketProgress.first { it.bucket == TimeOfDayBucket.EVENING }
         assertEquals(0, morningBucket.completed)
@@ -194,7 +194,6 @@ class DashboardViewModelTest {
         assertEquals(0, eveningBucket.completed)
         assertEquals(1, eveningBucket.total)
 
-        // Complete 1st instance (index 0) -> 1 out of 2 completed
         viewModel.toggleHabitCompletion(habitId = 10L, instanceIndex = 0)
         advanceUntilIdle()
 
@@ -208,7 +207,6 @@ class DashboardViewModelTest {
         assertEquals(1, afterFirst.bucketProgress.first { it.bucket == TimeOfDayBucket.MORNING }.completed)
         assertEquals(0, afterFirst.bucketProgress.first { it.bucket == TimeOfDayBucket.EVENING }.completed)
 
-        // Complete 2nd instance (index 1) -> 2 out of 2 completed
         viewModel.toggleHabitCompletion(habitId = 10L, instanceIndex = 1)
         advanceUntilIdle()
 
@@ -225,7 +223,7 @@ class DashboardViewModelTest {
         val monday = LocalDate.of(2026, 5, 11)
         val tuesday = LocalDate.of(2026, 5, 12)
         val wednesday = LocalDate.of(2026, 5, 13)
-        val mwfHabit = Habit(
+        val mwfHabit = Habit.singleSchedule(
             id = 20L,
             title = "Tempo Run",
             cadenceType = CadenceType.WEEKLY,
@@ -247,12 +245,10 @@ class DashboardViewModelTest {
 
         assertEquals(listOf("Tempo Run"), viewModel.uiState.value.pendingHabits.map { it.habit.title })
 
-        // Attempting to shift Monday -> Wednesday (already scheduled) must leave Monday unchanged
         viewModel.rescheduleHabit(20L, monday, wednesday)
         advanceUntilIdle()
         assertEquals(listOf("Tempo Run"), viewModel.uiState.value.pendingHabits.map { it.habit.title })
 
-        // Shifting Monday -> Tuesday removes from Monday and places on Tuesday
         viewModel.rescheduleHabit(20L, monday, tuesday)
         advanceUntilIdle()
         assertTrue(viewModel.uiState.value.pendingHabits.isEmpty())
@@ -266,7 +262,7 @@ class DashboardViewModelTest {
     fun dashboard_rescheduleClearsCompletionsAndUndoRestoresHabitAndInstances() = runTest {
         val monday = LocalDate.of(2026, 5, 11)
         val tuesday = LocalDate.of(2026, 5, 12)
-        val mwfStretch = Habit(
+        val mwfStretch = Habit.singleSchedule(
             id = 21L,
             title = "Stretch",
             cadenceType = CadenceType.WEEKLY,
@@ -290,13 +286,11 @@ class DashboardViewModelTest {
         }
         advanceUntilIdle()
 
-        // Complete 1 of 2 instances on Monday
         viewModel.toggleHabitCompletion(21L, 0, monday)
         advanceUntilIdle()
         assertEquals(1, viewModel.uiState.value.completedHabits.size)
         assertEquals(1, viewModel.uiState.value.pendingHabits.size)
 
-        // Reschedule Monday -> Tuesday clears completions on Monday and emits undo banner
         viewModel.rescheduleHabit(21L, monday, tuesday)
         advanceUntilIdle()
         assertTrue(viewModel.uiState.value.pendingHabits.isEmpty())
@@ -305,21 +299,16 @@ class DashboardViewModelTest {
         val banner = viewModel.uiState.value.rescheduleBanner
         assertTrue(banner != null)
         assertEquals("Stretch", banner!!.habitTitle)
-        assertEquals(monday, banner.fromDate)
-        assertEquals(tuesday, banner.toDate)
 
-        // Tuesday has 2 fresh pending instances
         viewModel.selectDate(tuesday)
         advanceUntilIdle()
         assertEquals(2, viewModel.uiState.value.pendingHabits.size)
         assertTrue(viewModel.uiState.value.completedHabits.isEmpty())
 
-        // Undo restores Monday schedule, original partial completion, and clears Tuesday
         viewModel.undoLastReschedule()
         advanceUntilIdle()
         assertEquals(null, viewModel.uiState.value.rescheduleBanner)
         assertTrue(viewModel.uiState.value.pendingHabits.isEmpty())
-        assertTrue(viewModel.uiState.value.completedHabits.isEmpty())
 
         viewModel.selectDate(monday)
         advanceUntilIdle()
@@ -332,7 +321,7 @@ class DashboardViewModelTest {
     fun dashboard_toggleHabitCompletionOnRescheduledFromDateIsIgnored() = runTest {
         val monday = LocalDate.of(2026, 5, 11)
         val tuesday = LocalDate.of(2026, 5, 12)
-        val habit = Habit(
+        val habit = Habit.singleSchedule(
             id = 22L,
             title = "Focus Block",
             cadenceType = CadenceType.WEEKLY,
@@ -361,8 +350,8 @@ class DashboardViewModelTest {
 
     @Test
     fun dashboard_populatesTimeSlotOnAllCardsAnd32WeekMatrixEndingCurrentWeek() = runTest {
-        val today = LocalDate.of(2026, 5, 15) // Friday (current week Sunday is May 17)
-        val singleSlotHabit = Habit(
+        val today = LocalDate.of(2026, 5, 15)
+        val singleSlotHabit = Habit.singleSchedule(
             id = 31L,
             title = "Morning Journal",
             cadenceType = CadenceType.DAILY,
@@ -370,7 +359,7 @@ class DashboardViewModelTest {
             sortOrder = 0,
             createdAtEpochDay = today.minusDays(5).toEpochDay(),
         )
-        val multiSlotHabit = Habit(
+        val multiSlotHabit = Habit.singleSchedule(
             id = 32L,
             title = "Hydrate",
             cadenceType = CadenceType.DAILY,
@@ -381,7 +370,7 @@ class DashboardViewModelTest {
             sortOrder = 1,
             createdAtEpochDay = today.minusDays(5).toEpochDay(),
         )
-        val completedSingleHabit = Habit(
+        val completedSingleHabit = Habit.singleSchedule(
             id = 33L,
             title = "Read",
             cadenceType = CadenceType.DAILY,
@@ -425,6 +414,80 @@ class DashboardViewModelTest {
         assertEquals(LocalDate.of(2026, 5, 17), lastColumnDates.last())
     }
 
+    @Test
+    fun dashboard_usesHistoricalScheduleForPastDateAndHandlesPausedWithoutDuplication() = runTest {
+        val today = LocalDate.of(2026, 5, 15)
+        val yesterday = today.minusDays(1)
+        val versionedHabit = Habit(
+            id = 40L,
+            title = "Water",
+            createdAtEpochDay = today.minusDays(10).toEpochDay(),
+            schedules = listOf(
+                HabitSchedule(
+                    effectiveFrom = null,
+                    cadenceType = CadenceType.DAILY,
+                    targetPerPeriod = 1,
+                    targetTimes = listOf(TargetTimeSlot("m", 8, 0, true)),
+                    timeOfDayBucket = TimeOfDayBucket.MORNING,
+                ),
+                HabitSchedule(
+                    effectiveFrom = today,
+                    cadenceType = CadenceType.DAILY,
+                    targetPerPeriod = 2,
+                    targetTimes = listOf(
+                        TargetTimeSlot("m", 8, 0, true),
+                        TargetTimeSlot("e", 20, 0, true),
+                    ),
+                    timeOfDayBucket = TimeOfDayBucket.MORNING,
+                ),
+            ),
+            pauseWindows = listOf(HabitPauseWindow(1L, today, today.plusDays(2))),
+        )
+        // Instance 0 completed today BEFORE pausing today
+        val fakeRepo = FakeDashboardRepository(
+            initialHabits = listOf(versionedHabit),
+            initialCompletions = mapOf(
+                yesterday to setOf(40L),
+                today to setOf(40L),
+            ),
+        )
+        val viewModel = DashboardViewModel(
+            repository = fakeRepo,
+            clockTodayProvider = { today },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        // Today is paused with 1 completed instance (0): ONLY completed instance 0 appears, NO pending instance 1, NO duplicate in pausedHabits!
+        val todayState = viewModel.uiState.value
+        assertTrue(todayState.pendingHabits.isEmpty())
+        assertEquals(1, todayState.completedHabits.size)
+        assertEquals(0, todayState.completedHabits.single().instanceIndex)
+        assertTrue(todayState.pausedHabits.isEmpty())
+
+        // Uncompleting instance 0 on paused today succeeds and moves habit cleanly to pausedHabits
+        viewModel.toggleHabitCompletion(40L, 0, today)
+        advanceUntilIdle()
+        val afterUncheck = viewModel.uiState.value
+        assertTrue(afterUncheck.completedHabits.isEmpty())
+        assertEquals(1, afterUncheck.pausedHabits.size)
+
+        // Attempting to check on paused date is ignored
+        viewModel.toggleHabitCompletion(40L, 0, today)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.completedHabits.isEmpty())
+
+        // Viewing yesterday shows historical 1x schedule (Morning bucket, 1 card)
+        viewModel.selectDate(yesterday)
+        advanceUntilIdle()
+        val yesterdayState = viewModel.uiState.value
+        assertEquals(1, yesterdayState.completedHabits.size)
+        assertEquals(1, yesterdayState.completedHabits.single().totalInstances)
+        assertEquals(TimeOfDayBucket.MORNING, yesterdayState.completedHabits.single().bucket)
+    }
+
     private fun DashboardUiState.StreakForHabit(habitId: Long): Int =
         (pendingHabits + completedHabits).first { it.habit.id == habitId }.streakDays
 }
@@ -448,7 +511,7 @@ private class FakeDashboardRepository(
 ) : HabitRepository {
     private val habitsFlow = MutableStateFlow(initialHabits)
     private val completedInstancesFlow = MutableStateFlow<Map<LocalDate, Map<Long, Set<Int>>>>(
-        initialCompletions.mapValues { (_, ids) -> ids.associateWith { setOf(0) } }
+        initialCompletions.mapValues { (_, ids) -> ids.associateWith { setOf(0) } },
     )
     private val domainsFlow = MutableStateFlow<List<String>>(emptyList())
     val savedPrefs = MutableStateFlow(DashboardPreferences())

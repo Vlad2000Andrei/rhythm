@@ -115,6 +115,7 @@ import com.rhythm.habittracker.domain.model.CustomCadenceArchetype
 import com.rhythm.habittracker.domain.model.EndOfMonthBehavior
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitEditScope
 import com.rhythm.habittracker.domain.model.IntervalUnit
 import com.rhythm.habittracker.domain.model.MonthlySubMode
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
@@ -197,13 +198,13 @@ fun AddEditHabitScreen(
     }
 
     BackHandler {
-        viewModel.navigateBack(onNavigateBack)
+        viewModel.requestNavigateBack(onNavigateBack)
     }
 
     AddEditHabitScreenContent(
         uiState = uiState,
         commitToastSubtitle = commitToastSubtitle,
-        onBack = { viewModel.navigateBack(onNavigateBack) },
+        onBack = { viewModel.requestNavigateBack(onNavigateBack) },
         onTitleChanged = viewModel::onTitleChanged,
         onDescriptionChanged = viewModel::onDescriptionChanged,
         onSelectDomain = viewModel::selectDomain,
@@ -249,6 +250,10 @@ fun AddEditHabitScreen(
         },
         onDiscard = { viewModel.discardDraftAndExit(onNavigateBack) },
         onDeleteHabit = viewModel::deleteHabit,
+        onConfirmSaveScope = viewModel::confirmSaveWithScope,
+        onDismissSaveScope = viewModel::dismissSaveScopeDialog,
+        onDismissUnsavedChanges = viewModel::dismissUnsavedChangesDialog,
+        onSaveFromUnsavedChanges = viewModel::saveFromUnsavedChangesDialog,
         modifier = modifier,
     )
 }
@@ -291,6 +296,10 @@ fun AddEditHabitScreenContent(
     onDeleteHabit: () -> Unit,
     modifier: Modifier = Modifier,
     onSelectCustomStartDate: (LocalDate) -> Unit = {},
+    onConfirmSaveScope: (HabitEditScope) -> Unit = {},
+    onDismissSaveScope: () -> Unit = {},
+    onDismissUnsavedChanges: () -> Unit = {},
+    onSaveFromUnsavedChanges: () -> Unit = {},
 ) {
     val tokens = RhythmTheme.tokens
     var showCustomDomainDialog by remember { mutableStateOf(false) }
@@ -307,6 +316,7 @@ fun AddEditHabitScreenContent(
         topBar = {
             AddEditTopHeader(
                 isEditing = uiState.isEditing,
+                hasUnsavedChanges = uiState.hasUnsavedChanges,
                 draftSavedIndicator = uiState.draftSavedIndicator,
                 onBack = onBack,
                 onAvatarClick = { showArchitectureInfoDialog = true },
@@ -637,7 +647,11 @@ fun AddEditHabitScreenContent(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Every field autosaves locally so you can pause mid-design and resume later.",
+                        text = if (uiState.isEditing) {
+                            "Existing habit edits stay staged until you save so you can apply changes to future occurrences only or all occurrences."
+                        } else {
+                            "Every field autosaves locally so you can pause mid-design and resume later."
+                        },
                         style = tokens.bodyMd,
                         color = RhythmOnSurfaceVariant,
                     )
@@ -656,11 +670,173 @@ fun AddEditHabitScreenContent(
             },
         )
     }
+
+    uiState.pendingSaveScopeDialog?.let { scopeDialog ->
+        val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d", Locale.ENGLISH) }
+        val effectiveLabel = scopeDialog.futureEffectiveDate.format(dateFormatter)
+        val futureSubtitle = if (scopeDialog.isEffectiveTomorrowBecauseCompletedToday) {
+            "Takes effect tomorrow ($effectiveLabel). Today's logged completion and all past history stay untouched."
+        } else {
+            "Takes effect today ($effectiveLabel). Past streaks, completions, and heatmaps stay untouched."
+        }
+        val allOccurrencesSubtitle = buildString {
+            append("Applies retroactively to all past and future occurrences.")
+            if (scopeDialog.hasExistingScheduleHistory) {
+                append(" Replaces previous schedule history.")
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = onDismissSaveScope,
+            containerColor = RhythmSurfaceContainerLowest,
+            shape = RoundedCornerShape(14.dp),
+            title = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "SCHEDULE UPDATE SCOPE",
+                        style = tokens.labelSm,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RhythmOnSurfaceVariant,
+                    )
+                    Text(
+                        text = "Apply Changes To",
+                        style = tokens.headlineMd,
+                        color = RhythmOnSurface,
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = RhythmSurfaceContainerLow,
+                        border = BorderStroke(1.5.dp, RhythmPrimary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onConfirmSaveScope(HabitEditScope.FUTURE_ONLY) },
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Future occurrences only",
+                                    style = tokens.bodyMd,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = RhythmOnSurface,
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = RhythmPrimary,
+                                ) {
+                                    Text(
+                                        text = "RECOMMENDED",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = RhythmOnPrimary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = futureSubtitle,
+                                style = tokens.bodySm,
+                                color = RhythmOnSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = RhythmSurfaceContainerLowest,
+                        border = BorderStroke(1.dp, RhythmSurfaceContainerHigh),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onConfirmSaveScope(HabitEditScope.ALL_OCCURRENCES) },
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = "All occurrences",
+                                style = tokens.bodyMd,
+                                fontWeight = FontWeight.SemiBold,
+                                color = RhythmOnSurface,
+                            )
+                            Text(
+                                text = allOccurrencesSubtitle,
+                                style = tokens.bodySm,
+                                color = RhythmOnSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismissSaveScope) {
+                    Text("Keep Editing", color = RhythmOnSurfaceVariant)
+                }
+            },
+        )
+    }
+
+    if (uiState.showUnsavedChangesDialog) {
+        AlertDialog(
+            onDismissRequest = onDismissUnsavedChanges,
+            containerColor = RhythmSurfaceContainerLowest,
+            shape = RoundedCornerShape(14.dp),
+            title = {
+                Text(
+                    text = "Unsaved Changes",
+                    style = tokens.headlineMd,
+                    color = RhythmOnSurface,
+                )
+            },
+            text = {
+                Text(
+                    text = "You have unsaved edits to \"${uiState.title.ifBlank { "this habit" }}\". Save them before leaving?",
+                    style = tokens.bodyMd,
+                    color = RhythmOnSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = onSaveFromUnsavedChanges,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RhythmPrimary,
+                        contentColor = RhythmOnPrimary,
+                    ),
+                ) {
+                    Text("Save Changes")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onDiscard) {
+                        Text("Discard", color = RhythmError)
+                    }
+                    TextButton(onClick = onDismissUnsavedChanges) {
+                        Text("Keep Editing", color = RhythmOnSurfaceVariant)
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable
 private fun AddEditTopHeader(
     isEditing: Boolean,
+    hasUnsavedChanges: Boolean,
     draftSavedIndicator: Boolean,
     onBack: () -> Unit,
     onAvatarClick: () -> Unit,
@@ -726,11 +902,14 @@ private fun AddEditTopHeader(
                     modifier = Modifier
                         .size(6.dp)
                         .clip(CircleShape)
-                        .background(ConsistencyEmerald),
+                        .background(
+                            if (isEditing && hasUnsavedChanges) Color(0xFFD97706) else ConsistencyEmerald,
+                        ),
                 )
                 Text(
                     text = when {
-                        isEditing -> "CHANGES AUTOSAVED"
+                        isEditing && hasUnsavedChanges -> "UNSAVED CHANGES"
+                        isEditing -> "UP TO DATE"
                         draftSavedIndicator -> "DRAFT AUTOSAVED"
                         else -> "NEW DRAFT"
                     },
@@ -1960,7 +2139,7 @@ private fun CustomCadenceBody(
 
         // 30-Day Projection Matrix (6 columns x 5 rows = 30 upcoming days)
         val previewHabit = remember(uiState) {
-            Habit(
+            Habit.singleSchedule(
                 title = uiState.title.ifBlank { "Preview" },
                 cadenceType = CadenceType.CUSTOM,
                 scheduledDays = uiState.scheduledDays,

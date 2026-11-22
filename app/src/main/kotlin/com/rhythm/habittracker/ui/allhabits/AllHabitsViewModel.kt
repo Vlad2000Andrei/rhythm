@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -25,6 +26,8 @@ data class AllHabitListItem(
     val habit: Habit,
     val streakDays: Int,
     val scheduleSummary: String,
+    val isPausedToday: Boolean = false,
+    val pauseStatusLabel: String? = null,
 )
 
 data class AllHabitsUiState(
@@ -99,7 +102,7 @@ class AllHabitsViewModel(
         val fullyCompletedByHabit: Map<Long, Set<LocalDate>> = buildMap<Long, MutableSet<LocalDate>> {
             completedInstancesByDate.forEach { (date, habitMap) ->
                 habitMap.forEach { (id, instances) ->
-                    val target = habitById[id]?.dailyTargetCount ?: 1
+                    val target = habitById[id]?.scheduleForDate(date)?.dailyTargetCount ?: 1
                     if (instances.size >= target) {
                         getOrPut(id) { mutableSetOf() }.add(date)
                     }
@@ -107,8 +110,20 @@ class AllHabitsViewModel(
             }
         }
 
+        val dateFmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
         val items = sortedHabits.map { habit ->
             val completedDates = fullyCompletedByHabit[habit.id].orEmpty()
+            val activePause = habit.activePause(today)
+            val nextPause = habit.nextScheduledPause(today)
+            val pauseLabel = when {
+                activePause != null -> "PAUSED UNTIL ${activePause.endDate.format(dateFmt).uppercase(Locale.ENGLISH)}"
+                nextPause != null -> if (nextPause.startDate == nextPause.endDate) {
+                    "PAUSES ${nextPause.startDate.format(dateFmt).uppercase(Locale.ENGLISH)}"
+                } else {
+                    "PAUSES ${nextPause.startDate.format(dateFmt).uppercase(Locale.ENGLISH)}–${nextPause.endDate.format(dateFmt).uppercase(Locale.ENGLISH)}"
+                }
+                else -> null
+            }
             AllHabitListItem(
                 habit = habit,
                 streakDays = CadenceEvaluator.calculateStreak(
@@ -116,7 +131,9 @@ class AllHabitsViewModel(
                     completedDates = completedDates,
                     referenceDate = today,
                 ),
-                scheduleSummary = CadenceEvaluator.formatHabitScheduleSummary(habit),
+                scheduleSummary = CadenceEvaluator.formatHabitScheduleSummary(habit.latestSchedule),
+                isPausedToday = activePause != null,
+                pauseStatusLabel = pauseLabel,
             )
         }
 
@@ -176,8 +193,10 @@ class AllHabitsViewModel(
                 item.habit.description.lowercase(Locale.ENGLISH).contains(query) ||
                 item.habit.domain.lowercase(Locale.ENGLISH).contains(query) ||
                 item.habit.subTag.orEmpty().lowercase(Locale.ENGLISH).contains(query) ||
-                item.habit.cadenceType.label.lowercase(Locale.ENGLISH).contains(query) ||
-                item.scheduleSummary.lowercase(Locale.ENGLISH).contains(query)
+                item.habit.latestSchedule.cadenceType.label.lowercase(Locale.ENGLISH).contains(query) ||
+                item.scheduleSummary.lowercase(Locale.ENGLISH).contains(query) ||
+                item.pauseStatusLabel.orEmpty().lowercase(Locale.ENGLISH).contains(query) ||
+                (item.isPausedToday && "paused".contains(query))
             matchesDomain && matchesQuery
         }
 

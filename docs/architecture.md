@@ -4,7 +4,7 @@ Rhythm follows a unidirectional data flow (UDF) architecture organized into four
 
 1. **`ui/`** — Stateless Jetpack Compose screens (`DashboardScreenContent`, `AllHabitsScreenContent`, `HabitDetailScreenContent`, `AddEditHabitScreenContent`), stateful route wrappers, reusable tactile components (`RhythmComponents`), and the `RhythmTheme` design system.
 2. **`ui/.../*ViewModel.kt`** — Screen-level state holders (`DashboardViewModel`, `AllHabitsViewModel`, `HabitDetailViewModel`, `AddEditHabitViewModel`) exposing immutable `StateFlow` UI state and one-shot `SharedFlow` events.
-3. **`domain/`** — Pure Kotlin models (`Habit`, `CadenceType`, `TargetTimeSlot`) and the stateless `CadenceEvaluator` engine. Zero Android framework dependencies (uses `java.time.*`, available natively on `minSdk = 26`).
+3. **`domain/`** — Pure Kotlin models (`Habit`, `HabitSchedule`, `HabitPauseWindow`, `HabitEditScope`, `CadenceType`, `TargetTimeSlot`) and the stateless `CadenceEvaluator` engine. Zero Android framework dependencies (uses `java.time.*`, available natively on `minSdk = 26`).
 4. **`data/` & `reminders/`** — Offline persistence (`HabitDatabase`, `HabitDao`, `RoomHabitRepository`, `DataStoreDraftHabitStore`) and `AlarmManager` scheduling (`AlarmHabitReminderScheduler`, `HabitReminderReceiver`).
 
 ---
@@ -18,25 +18,25 @@ app/src/main/kotlin/com/rhythm/habittracker/
 ├── NavigationKeys.kt                # @Serializable NavKey routes (DashboardRoute, AllHabitsRoute, HabitDetailRoute, AddEditHabitRoute)
 ├── RhythmApplication.kt             # Application class, manual DI container (AppContainer) & reactive widget auto-refresh observer
 ├── data/
-│   ├── HabitRepository.kt           # HabitRepository interface + Mutex-serialized RoomHabitRepository (incl. RescheduleOutcome/UndoToken)
+│   ├── HabitRepository.kt           # HabitRepository interface + unified Mutex-serialized RoomHabitRepository (CRUD, pause/resume & RescheduleOutcome/UndoToken)
 │   └── local/
 │       ├── DraftHabitStore.kt       # DataStore Preferences autosave for in-progress new habits
-│       ├── HabitDatabase.kt         # RoomDatabase singleton (rhythm_habits.db, v4)
-│       ├── HabitMapper.kt           # HabitEntity <-> Habit domain conversion (CSV & JSON)
-│       ├── dao/HabitDao.kt          # Reactive Flow & suspend queries, CRUD, and atomic @Transaction reschedule/undo cleanup
-│       └── entity/HabitEntity.kt    # HabitEntity, HabitCompletionEntity, CustomDomainEntity, DashboardPreferencesEntity
+│       ├── HabitDatabase.kt         # RoomDatabase singleton (rhythm_habits.db, v5 w/ lossless MIGRATION_4_5)
+│       ├── HabitMapper.kt           # HabitWithDetails / HabitScheduleEntity / HabitPauseEntity <-> Domain conversion
+│       ├── dao/HabitDao.kt          # @Transaction HabitWithDetails queries, ABORT inserts, schedule/pause upserts & atomic reschedule/undo cleanup
+│       └── entity/HabitEntity.kt    # HabitEntity (lean identity), HabitScheduleEntity, HabitPauseEntity, HabitWithDetails, HabitCompletionEntity, CustomDomainEntity, DashboardPreferencesEntity
 ├── domain/
-│   ├── CadenceEvaluator.kt          # Pure recurrence, rescheduling/sanitization, current/best streak, summary formatting, horizon & matrix math
-│   └── model/HabitModels.kt         # Habit, HabitAccentColor, CadenceType, TargetTimeSlot, enums
+│   ├── CadenceEvaluator.kt          # Pure date-scoped recurrence, effective-dated editing, pause windows, unified ISO-week streaks, rescheduling, summary formatting, horizon & matrix math
+│   └── model/HabitModels.kt         # Habit, HabitSchedule, HabitPauseWindow, HabitEditScope, HabitAccentColor, CadenceType, TargetTimeSlot, enums
 ├── reminders/
-│   ├── HabitReminderReceiver.kt     # BroadcastReceiver firing notifications & rescheduling next day
-│   └── HabitReminderScheduler.kt    # ReminderScheduler interface + AlarmManager implementation
+│   ├── HabitReminderReceiver.kt     # BroadcastReceiver enforcing pause/mute/due checks, firing notifications & rolling to next unpaused date
+│   └── HabitReminderScheduler.kt    # ReminderScheduler interface + date/pause-aware AlarmManager implementation (MAX_MANAGED_SLOTS = 20)
 ├── widget/
 │   ├── WidgetModels.kt              # WidgetKind, WidgetThemeMode, SingleHabitWidgetData, OverallMatrixWidgetData, UpcomingTasksWidgetData, WidgetTaskItem
 │   ├── WidgetPreferencesStore.kt    # SharedPreferences store for per-widget Light/Dark mode & Single-Habit target ID
 │   ├── WidgetDataBuilder.kt         # Pure Kotlin widget snapshot aggregator for all 3 home screen widgets
-│   ├── WidgetBitmapRenderer.kt      # High-DPI responsive Canvas renderer (Light/Dark, Tall/Wide/Square sizes, relative matrix + unscheduled 'X')
-│   ├── RhythmWidgetUpdater.kt       # AppWidgetManager RemoteViews updater + PendingIntent router (deep-links & task toggles)
+│   ├── WidgetBitmapRenderer.kt      # High-DPI responsive Canvas renderer (Light/Dark, Tall/Wide/Square sizes, relative matrix, '||' pause bars & unscheduled 'X')
+│   ├── RhythmWidgetUpdater.kt       # AppWidgetManager RemoteViews updater + PendingIntent router (deep-links & pause-guarded task toggles)
 │   ├── HabitCadenceWidgetProvider.kt    # AppWidgetProvider for single-habit cadence matrix widget
 │   ├── OverallCadenceWidgetProvider.kt  # AppWidgetProvider for overall cadence & time-block matrix widget
 │   ├── UpcomingTasksWidgetProvider.kt   # Interactive AppWidgetProvider supporting home screen task completion toggles (ACTION_TOGGLE_TASK)
@@ -44,19 +44,19 @@ app/src/main/kotlin/com/rhythm/habittracker/
 │   └── WidgetPreviews.kt            # Compose @Preview gallery for tall/wide/square light/dark widgets
 └── ui/
     ├── addhabit/
-    │   ├── AddEditHabitScreen.kt    # New / Edit Habit Architect UI + Daily/Weekly/Monthly/Custom tabs + Domain delete confirm
-    │   └── AddEditHabitViewModel.kt # Form state, serialized draft/edit autosave, cadence-change override cleanup, commit/delete
+    │   ├── AddEditHabitScreen.kt    # New / Edit Habit Architect UI + Daily/Weekly/Monthly/Custom tabs + SaveScopeDialog, UnsavedChangesDialog & Domain delete confirm
+    │   └── AddEditHabitViewModel.kt # Form state, DataStore new-habit draft autosave, staged existing-habit edits, smart cutoff scope prompting & delete
     ├── allhabits/
-    │   ├── AllHabitsScreen.kt       # System Inventory list, telemetry bar, live search, domain chips & detail/edit navigation
-    │   └── AllHabitsViewModel.kt    # Inventory stats, domain chip counts, search/domain filtering into AllHabitsUiState
+    │   ├── AllHabitsScreen.kt       # System Inventory list, telemetry bar, live search (incl. "paused"), pause badges, domain chips & detail/edit navigation
+    │   └── AllHabitsViewModel.kt    # Inventory stats, pause labels, domain chip counts, search/domain filtering into AllHabitsUiState
     ├── components/
-    │   └── RhythmComponents.kt      # RhythmBrandMark, RhythmProfileAvatar, RhythmTactileSwitch, RhythmConfettiOverlay, RhythmMatrixCell
+    │   └── RhythmComponents.kt      # RhythmBrandMark, RhythmProfileAvatar, RhythmTactileSwitch, RhythmConfettiOverlay, RhythmMatrixCell (emerald + 'X' + '||' pause bars)
     ├── dashboard/
-    │   ├── DashboardScreen.kt       # Dashboard UI, expandable FAB nav (Add Habit / All Habits), heatmap, weekly strip, swipe-to-reschedule & wave
-    │   └── DashboardViewModel.kt    # Combines DB flows + date/domain/sort filters + reschedule/undo state into DashboardUiState
+    │   ├── DashboardScreen.kt       # Dashboard UI, expandable FAB nav, heatmap, weekly strip, swipe-to-reschedule (w/ pause conflict check), wave & collapsible PAUSED strip
+    │   └── DashboardViewModel.kt    # Combines DB flows + date/domain/sort filters + pausedHabits (PausedHabitItem) + reschedule/undo state into DashboardUiState
     ├── habitdetail/
-    │   ├── HabitDetailScreen.kt     # Read-only habit analytics, 20-week completion matrix, target schedule, 7-day run & Edit Habit CTA
-    │   └── HabitDetailViewModel.kt  # Computes current/best streak, overall rate, 20-week heatmap, skips & weekly strip into HabitDetailUiState
+    │   ├── HabitDetailScreen.kt     # Read-only habit analytics, 20-week matrix, PauseStatusCard & PauseHabitDialog, target schedule & Edit Habit CTA
+    │   └── HabitDetailViewModel.kt  # Computes streaks, overall rate, prorated flex target, pause/resume mutations w/ ReminderScheduler sync into HabitDetailUiState
     └── theme/
         ├── Color.kt                 # Calibrated monochrome surface spectrum + emerald heatmap color
         ├── Theme.kt                 # RhythmTheme & CompositionLocal typography provider
@@ -83,6 +83,7 @@ flowchart TD
 
     Repo --> AllFactory["AllHabitsViewModel.Factory"]
     Repo --> DetailFactory["HabitDetailViewModel.Factory"]
+    Sched --> DetailFactory
 
     Repo --> AddEditFactory["AddEditHabitViewModel.Factory"]
     Draft --> AddEditFactory
@@ -112,7 +113,7 @@ stateDiagram-v2
     HabitDetailRoute --> DashboardRoute : Back Arrow or Habit deleted
     AllHabitsRoute --> DashboardRoute : Back Arrow
     AddEditHabitRoute_New --> DashboardRoute : Back Arrow (keeps draft)\nDiscard (clears draft)\nCommit Habit (saves & clears draft)
-    AddEditHabitRoute_Edit --> HabitDetailRoute : Back / Discard / Save Changes / Delete Habit
+    AddEditHabitRoute_Edit --> HabitDetailRoute : Back / Discard (w/ Unsaved Prompt) / Save Changes (Future or All) / Delete Habit
 ```
 
 `AddEditHabitRoute` carries `val habitId: Long? = null` and `val instanceId: Long = 0L`, which is used as part of the `viewModel(key = "add_edit_${route.habitId ?: "new"}_${route.instanceId}")` key to guarantee a fresh `AddEditHabitViewModel` on every navigation, and `HabitDetailRoute(habitId)` scopes its `HabitDetailViewModel` via `key = "habit_detail_${route.habitId}"`.
@@ -137,7 +138,7 @@ flowchart LR
     Builder --> Matrix["CadenceEvaluator.buildCadenceMatrix (14 weeks)"]
     Builder --> Horizon["CadenceEvaluator.buildWeeklyHorizon (Mon..Sun)"]
     Builder --> Buckets["BucketProgress (Morning / During the day / Evening per instance)"]
-    Builder --> Lists["pendingHabits & completedHabits (expanded per daily instance)"]
+    Builder --> Lists["pendingHabits, completedHabits (per instance) & pausedHabits (PausedHabitItem)"]
     Builder --> Momentum["Momentum Insight Copy"]
 ```
 
@@ -187,10 +188,10 @@ sequenceDiagram
     else Drag released past threshold
         UI-->>UI: Opens RescheduleHabitDialog for live habit snapshot on selectedDate
         User->>UI: Picks targetDate on calendar
-        UI->>Eval: isHabitScheduledOn(habit, targetDate)
-        alt Target date already has a scheduled instance
-            Eval-->>UI: true (conflict warning shown, Reschedule disabled)
-        else Target date is open
+        UI->>Eval: isHabitScheduledOn(habit, targetDate) & habit.isPausedOn(targetDate)
+        alt Target date is already scheduled OR inside a pause window
+            Eval-->>UI: Conflict / pause warning shown, Reschedule disabled
+        else Target date is open and unpaused
             Eval-->>UI: false
             User->>UI: Tap "Reschedule"
             UI->>VM: rescheduleHabit(habitId, selectedDate, targetDate)
@@ -209,39 +210,52 @@ sequenceDiagram
     end
 ```
 
-### 2. New Habit Draft Autosave & Commit Flow
+### 2. New Habit Draft Autosave & Staged Existing-Habit Edit Flow
 
-When creating a new habit (`editingHabitId == null`), field edits are serialized via `draftSaveJob` and persisted asynchronously to `DraftHabitStore` (`DataStore<Preferences>`), powering the `DRAFT AUTOSAVED` status badge (while editing an existing habit serializes Room writes through `autosaveJob`, gated on `isInitialLoadComplete`):
+`AddEditHabitViewModel` separates new-habit drafting from editing an existing habit so retroactive history edits never happen implicitly:
+
+- **Creating a new habit (`editingHabitId == null`)**: Field edits serialize via `draftSaveJob` into `DraftHabitStore` (`DataStore<Preferences>`), powering the `DRAFT AUTOSAVED` header badge until **Commit Habit** or **Discard** runs.
+- **Editing an existing habit (`editingHabitId != null`)**: Edits stay **staged in memory** (`hasUnsavedChanges`, badge switches between `UP TO DATE` and `UNSAVED CHANGES`) instead of live-writing to Room on every tap.
+  - **Identity & reminder-only changes** (`title`, `description`, `domain`, `colorHex`, `slot.enabled`, `skipReminderIfCompleted`) save directly habit-wide via `CadenceEvaluator.applyIdentityAndReminderOnlyEdit` without prompting.
+  - **Schedule / daily-count / target-time changes** (`CadenceEvaluator.hasScheduleOrTimesChanged`) open `SaveScopeDialog` (`SaveScopeDialogState`) offering **Future occurrences only** (`HabitEditScope.FUTURE_ONLY` with smart cutoff: `today` if no completions were logged today, else `today.plusDays(1)`) or **All occurrences** (`HabitEditScope.ALL_OCCURRENCES`).
+  - Navigating Back with `hasUnsavedChanges == true` opens `UnsavedChangesDialog` (*Save Changes / Discard Changes / Keep Editing*).
 
 ```mermaid
 sequenceDiagram
     actor User
     participant UI as AddEditHabitScreen
     participant VM as AddEditHabitViewModel
+    participant Eval as CadenceEvaluator
     participant Draft as DraftHabitStore (DataStore)
     participant Repo as HabitRepository (Room)
     participant Alarm as ReminderScheduler
 
-    Note over VM,Draft: On init (when editingHabitId == null)
-    VM->>Draft: loadDraft()
-    Draft-->>VM: Restores unsaved HabitDraft (if present)
-
-    User->>UI: Edits title / cadence / color / time slots
-    UI->>VM: onTitleChanged / selectCadenceType / ...
-    VM->>VM: Updates _uiState
-    VM->>Draft: saveDraft(HabitDraft)
-
-    User->>UI: Tap "Commit Habit"
-    UI->>VM: commitHabit()
-    alt Title is blank
-        VM-->>UI: Sets titleError = true
-    else Title is valid
+    alt Creating New Habit (editingHabitId == null)
+        VM->>Draft: loadDraft() on init
+        User->>UI: Edits fields
+        VM->>Draft: saveDraft(HabitDraft) (DRAFT AUTOSAVED)
+        User->>UI: Tap "Commit Habit"
         VM->>Repo: saveHabit(habit)
-        Repo-->>VM: savedId
         VM->>Alarm: scheduleHabitReminders(habit.copy(id = savedId))
         VM->>Draft: clearDraft()
-        VM-->>UI: Emits AddEditHabitEvent.Committed(subtitle)
-        UI-->>UI: Shows "Habit Architecture Committed · 200 OK" toast (650ms)
-        UI->>UI: onNavigateBack()
+    else Editing Existing Habit (editingHabitId != null)
+        VM->>Repo: getHabitById(editingHabitId)
+        User->>UI: Stages edits in memory (UNSAVED CHANGES)
+        User->>UI: Tap "Save Changes"
+        alt hasScheduleOrTimesChanged == true
+            VM-->>UI: Shows SaveScopeDialog (Future Only vs All Occurrences)
+            User->>UI: Selects scope
+            VM->>Eval: applyScheduleEdit(existing, edited, scope, smartCutoff)
+        else Identity or reminder-only edit
+            VM->>Eval: applyIdentityAndReminderOnlyEdit(existing, edited)
+        end
+        VM->>Repo: saveHabit(updatedHabit)
+        VM->>Alarm: scheduleHabitReminders(updatedHabit)
     end
+    VM-->>UI: Emits AddEditHabitEvent.Committed(subtitle)
+    UI->>UI: onNavigateBack()
 ```
+
+### 3. Pixel-Clock Habit Pausing Flow (`HabitDetailViewModel`)
+
+Tapping **Pause** or **Resume Early / Cancel Pause** inside [`HabitDetailScreen.kt`](../app/src/main/kotlin/com/rhythm/habittracker/ui/habitdetail/HabitDetailScreen.kt) delegates through `HabitDetailViewModel` -> `RoomHabitRepository.pauseHabit` / `resumeOrCancelPause` (serialized by `habitMutationMutex`), updates `habit_pauses` via `CadenceEvaluator.addOrUpdatePauseWindow` / `resumeOrCancelPause`, and immediately re-syncs alarms through `ReminderScheduler.scheduleHabitReminders` so muted days skip notifications and unpaused recovery days resume on schedule.
