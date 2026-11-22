@@ -61,7 +61,11 @@ class UpcomingTasksWidgetProvider : AppWidgetProvider() {
                         val today = LocalDate.now()
                         val habit = repo.getHabitById(habitId)
                         if (habit != null && today !in habit.rescheduledFromDates) {
-                            repo.toggleCompletion(habitId, today, instanceIndex)
+                            val canToggle = !habit.isPausedOn(today) ||
+                                instanceIndex in repo.getCompletedInstancesOn(habitId, today)
+                            if (canToggle) {
+                                repo.toggleCompletion(habitId, today, instanceIndex)
+                            }
                         }
                     }
                     RhythmWidgetUpdater.updateAllWidgets(context)

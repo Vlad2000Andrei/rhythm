@@ -9,9 +9,9 @@
 | Guide | Purpose |
 | :--- | :--- |
 | **[Architecture & Data Flow](./architecture.md)** | Layered architecture, manual dependency injection (`AppContainer`), Navigation 3 routing (`DashboardRoute`, `AllHabitsRoute`, `HabitDetailRoute`, `AddEditHabitRoute`), widget deep-linking (`EXTRA_OPEN_HABIT_ID`), and reactive `StateFlow` pipelines. |
-| **[Domain & Cadence Engine](./domain-and-cadence-engine.md)** | Scheduling rules (`DAILY`, `WEEKLY`, `MONTHLY`, `CUSTOM` with configurable start date), single-occurrence rescheduling with conflict prevention, override sanitization (`sanitizeRescheduleOverrides` / `hasCadenceChanged`), multi-instance daily habits, flexible weekly pools, short-month rollbacks, current/best streak calculation (`calculateStreak` / `calculateBestStreak`), schedule formatting (`formatHabitScheduleSummary`), multi-week heatmap generation (32-week Dashboard matrix / 20-week Habit Detail matrix), and pure widget telemetry aggregation (`WidgetDataBuilder`). |
-| **[Persistence & Reminders](./persistence-and-reminders.md)** | Room SQLite schema (`rhythm_habits.db`, v4 with per-instance completion tracking and rescheduled date overrides), atomic `@Transaction` reschedule/undo cleanup, serialized draft/edit autosave (`habit_draft_prefs`), persisted domains/preferences, per-widget SharedPreferences (`rhythm_widget_prefs` via `WidgetPreferencesStore`), reactive widget auto-refresh (`RhythmWidgetUpdater`), and `AlarmManager` notification delivery. |
-| **[UI & Design System](./ui-and-design-system.md)** | Monochrome surface palette, 7 accent signatures, `Inter` + `JetBrains Mono` typography tokens, adaptive launcher icon matching `RhythmBrandMark`, expandable Dashboard navigation FAB (`Add Habit` / `All Habits`), All Habits Inventory (`AllHabitsScreen`), Habit Detail view (`HabitDetailScreen`), responsive Light/Dark Android Home Screen Widgets (`HabitCadenceWidgetProvider`, `OverallCadenceWidgetProvider`, `UpcomingTasksWidgetProvider`, `WidgetConfigActivity`, `WidgetBitmapRenderer`), cancelable swipe-to-reschedule modal + undo banner, domain deletion modal, cancelable checking color-wave animation, screen-by-screen Stitch mapping, and Compose `@Preview` rendering. |
+| **[Domain & Cadence Engine](./domain-and-cadence-engine.md)** | Modular domain model (`Habit`, effective-dated `HabitSchedule`, `HabitPauseWindow`, `HabitEditScope`), date-scoped scheduling (`DAILY`, `WEEKLY`, `MONTHLY`, `CUSTOM`), effective-dated schedule updates (`FUTURE_ONLY` vs. `ALL_OCCURRENCES` with smart today/tomorrow cutoff), single-occurrence rescheduling with conflict/pause blocking, override sanitization (`sanitizeRescheduleOverrides` / `hasCadenceChanged` / `hasScheduleOrTimesChanged`), Pixel-Clock pause windows (`addOrUpdatePauseWindow`, `resumeOrCancelPause`, calendar-rhythm resume, prorated `flexiblePoolDueTargetForWeek`), multi-instance daily habits, unified ISO-week maximal-run current/best streak calculation (`calculateStreak` / `calculateBestStreak`), schedule formatting (`formatHabitScheduleSummary`), multi-week heatmap generation with `||` pause bars (32-week Dashboard / 20-week Habit Detail), and pure widget telemetry aggregation (`WidgetDataBuilder`). |
+| **[Persistence & Reminders](./persistence-and-reminders.md)** | Room SQLite schema (`rhythm_habits.db`, v5 modular tables `habits`, `habit_schedules`, `habit_pauses`, `habit_completions`, lossless `MIGRATION_4_5`), `HabitWithDetails` `@Transaction` queries, mutex-serialized CRUD & pause/reschedule operations (`RoomHabitRepository`), DataStore draft autosave (`habit_draft_prefs`) for new habits vs. staged in-memory editing for existing habits, persisted domains/preferences, per-widget SharedPreferences (`rhythm_widget_prefs` via `WidgetPreferencesStore`), reactive widget auto-refresh (`RhythmWidgetUpdater`), and date/pause-aware `AlarmManager` notification delivery (`MAX_MANAGED_SLOTS = 20`). |
+| **[UI & Design System](./ui-and-design-system.md)** | Monochrome surface palette, 7 accent signatures, `Inter` + `JetBrains Mono` typography tokens, adaptive launcher icon matching `RhythmBrandMark`, expandable Dashboard navigation FAB (`Add Habit` / `All Habits`), collapsible Dashboard `PAUSED TODAY` strip & pause-aware reschedule blocking, All Habits Inventory (`AllHabitsScreen` w/ pause status badges & `"paused"` search), Habit Detail view (`HabitDetailScreen` w/ Pixel-Clock `PauseStatusCard`, `PauseHabitDialog`, `"PAUSED"`/`"STARTS TOMORROW"`/`"MUTED"` pills & 20-week matrix), Add/Edit Habit staged Save Flow (`UNSAVED CHANGES` / `UP TO DATE` badge, Scope & Unsaved Changes dialogs), responsive Light/Dark Android Home Screen Widgets (w/ paused matrix & toggle guard), cancelable checking color-wave animation, screen-by-screen Stitch mapping, and Compose `@Preview` rendering. |
 
 ---
 
@@ -56,6 +56,7 @@ flowchart LR
     AllVM --> Repo
     DetailVM --> Eval
     DetailVM --> Repo
+    DetailVM --> Scheduler
     AddEditVM --> Eval
     AddEditVM --> Repo
     AddEditVM --> DraftStore
@@ -103,13 +104,15 @@ C:\Users\cursa\AppData\AndroidCLI\android.exe preview render "?:app" `
 ```
 
 ### 3. Install Over Wireless ADB
-For an already-paired phone using Wireless Debugging (`_adb-tls-connect._tcp`), start the ADB server and wait ~4 seconds in the same command so mDNS discovers the device before installing:
+For an already-paired phone using Wireless Debugging (`_adb-tls-connect._tcp`), always pass `--user 0` so Android installs only into your Personal profile (never into a Work profile like `User 10`), and start the ADB server + wait ~4 seconds in the same command:
+> **Warning**: Never run `.\gradlew.bat connectedDebugAndroidTest` directly against a personal phone with live data—AGP's instrumented test runner automatically uninstalls `com.rhythm.habittracker` at teardown, wiping unbacked-up local database changes. Run `testDebugUnitTest` locally or use a dedicated AVD/emulator for instrumented tests.
+
 ```powershell
-C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe start-server; Start-Sleep -Seconds 4; C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe -s adb-48201FDAS0004G-PnRogK._adb-tls-connect._tcp install -r app\build\outputs\apk\debug\app-debug.apk
+C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe start-server; Start-Sleep -Seconds 4; C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe -s adb-48201FDAS0004G-PnRogK._adb-tls-connect._tcp install --user 0 -r app\build\outputs\apk\debug\app-debug.apk
 ```
 If pairing a new device for the first time:
 ```powershell
 C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe pair <hostname-or-ip>:<pairing-port> <6-digit-code>
 C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe connect <device-ip>:<connect-port>
-C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe -s <device-ip>:<connect-port> install -r app\build\outputs\apk\debug\app-debug.apk
+C:\Users\cursa\AppData\Local\Android\Sdk\platform-tools\adb.exe -s <device-ip>:<connect-port> install --user 0 -r app\build\outputs\apk\debug\app-debug.apk
 ```

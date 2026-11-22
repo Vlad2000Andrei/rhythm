@@ -9,6 +9,7 @@ import com.rhythm.habittracker.domain.CadenceEvaluator
 import com.rhythm.habittracker.domain.CadenceMatrixData
 import com.rhythm.habittracker.domain.WeekHorizonDay
 import com.rhythm.habittracker.domain.model.Habit
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
 import com.rhythm.habittracker.domain.model.HabitSortMode
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import com.rhythm.habittracker.domain.model.TimeOfDayBucket
@@ -39,11 +40,16 @@ data class HabitCardItem(
     val streakDays: Int,
     val instanceIndex: Int = 0,
     val totalInstances: Int = 1,
-    val timeSlot: TargetTimeSlot? = habit.timeSlotForInstance(instanceIndex),
-) {
-    val bucket: TimeOfDayBucket
-        get() = habit.bucketForInstance(instanceIndex)
-}
+    val timeSlot: TargetTimeSlot? = habit.latestSchedule.timeSlotForInstance(instanceIndex),
+    val bucket: TimeOfDayBucket = habit.latestSchedule.bucketForInstance(instanceIndex),
+)
+
+data class PausedHabitItem(
+    val habit: Habit,
+    val pauseWindow: HabitPauseWindow,
+    val resumesOnLabel: String,
+    val pausedUntilLabel: String,
+)
 
 data class RescheduleBanner(
     val habitTitle: String,
@@ -67,6 +73,7 @@ data class DashboardUiState(
     val sortMode: HabitSortMode = HabitSortMode.FLOW,
     val pendingHabits: List<HabitCardItem> = emptyList(),
     val completedHabits: List<HabitCardItem> = emptyList(),
+    val pausedHabits: List<PausedHabitItem> = emptyList(),
     val momentumInsightLead: String = "",
     val momentumInsightHighlight: String = "",
     val momentumInsightTail: String = "",
@@ -155,6 +162,10 @@ class DashboardViewModel(
         viewModelScope.launch {
             val habit = repository.getHabitById(habitId) ?: return@launch
             if (date in habit.rescheduledFromDates) return@launch
+            if (habit.isPausedOn(date)) {
+                val existing = repository.getCompletedInstancesOn(habitId, date)
+                if (instanceIndex !in existing) return@launch
+            }
             repository.toggleCompletion(habitId, date, instanceIndex)
         }
     }
@@ -216,7 +227,7 @@ class DashboardViewModel(
         val fullyCompletedByHabit: Map<Long, Set<LocalDate>> = buildMap<Long, MutableSet<LocalDate>> {
             completedInstancesByDate.forEach { (date, habitMap) ->
                 habitMap.forEach { (id, instances) ->
-                    val target = habitById[id]?.dailyTargetCount ?: 1
+                    val target = habitById[id]?.scheduleForDate(date)?.dailyTargetCount ?: 1
                     if (instances.size >= target) {
                         getOrPut(id) { mutableSetOf() }.add(date)
                     }
@@ -238,6 +249,8 @@ class DashboardViewModel(
             CadenceEvaluator.isHabitDueOn(habit, selectedDate, datesForDueCheck)
         }
 
+        val dueHabitIds = dueOnSelectedDate.mapTo(mutableSetOf()) { it.id }
+
         val allDueCardItems = dueOnSelectedDate.flatMap { habit ->
             val datesForHabit = fullyCompletedByHabit[habit.id].orEmpty()
             val streak = CadenceEvaluator.calculateStreak(
@@ -245,20 +258,41 @@ class DashboardViewModel(
                 completedDates = datesForHabit,
                 referenceDate = selectedDate,
             )
+            val dateSchedule = habit.scheduleForDate(selectedDate)
             val completedInstances = completedInstancesOnSelectedDate[habit.id].orEmpty()
-            val totalInstances = maxOf(
-                habit.dailyTargetCount,
-                (completedInstances.maxOrNull() ?: -1) + 1,
-            )
-            (0 until totalInstances).map { idx ->
-                HabitCardItem(
-                    habit = habit,
-                    isCompleted = idx in completedInstances,
-                    streakDays = streak,
-                    instanceIndex = idx,
-                    totalInstances = totalInstances,
-                    timeSlot = habit.timeSlotForInstance(idx),
+            if (habit.isPausedOn(selectedDate) && completedInstances.isNotEmpty()) {
+                val sortedCompleted = completedInstances.sorted()
+                val totalInstances = maxOf(
+                    dateSchedule.dailyTargetCount,
+                    (sortedCompleted.maxOrNull() ?: -1) + 1,
                 )
+                sortedCompleted.map { idx ->
+                    HabitCardItem(
+                        habit = habit,
+                        isCompleted = true,
+                        streakDays = streak,
+                        instanceIndex = idx,
+                        totalInstances = totalInstances,
+                        timeSlot = dateSchedule.timeSlotForInstance(idx),
+                        bucket = dateSchedule.bucketForInstance(idx),
+                    )
+                }
+            } else {
+                val totalInstances = maxOf(
+                    dateSchedule.dailyTargetCount,
+                    (completedInstances.maxOrNull() ?: -1) + 1,
+                )
+                (0 until totalInstances).map { idx ->
+                    HabitCardItem(
+                        habit = habit,
+                        isCompleted = idx in completedInstances,
+                        streakDays = streak,
+                        instanceIndex = idx,
+                        totalInstances = totalInstances,
+                        timeSlot = dateSchedule.timeSlotForInstance(idx),
+                        bucket = dateSchedule.bucketForInstance(idx),
+                    )
+                }
             }
         }
 
@@ -287,22 +321,41 @@ class DashboardViewModel(
 
         val sortedCards = when (sortMode) {
             HabitSortMode.FLOW -> cardItems.sortedWith(
-                compareBy<HabitCardItem> { it.habit.sortOrder }.thenBy { it.instanceIndex }
+                compareBy<HabitCardItem> { it.habit.sortOrder }.thenBy { it.instanceIndex },
             )
             HabitSortMode.STREAK -> cardItems.sortedWith(
                 compareByDescending<HabitCardItem> { it.streakDays }
                     .thenBy { it.habit.sortOrder }
-                    .thenBy { it.instanceIndex }
+                    .thenBy { it.instanceIndex },
             )
             HabitSortMode.DOMAIN -> cardItems.sortedWith(
                 compareBy<HabitCardItem> { it.habit.domain }
                     .thenBy { it.habit.sortOrder }
-                    .thenBy { it.instanceIndex }
+                    .thenBy { it.instanceIndex },
             )
         }
 
         val pending = sortedCards.filter { !it.isCompleted }
         val completed = sortedCards.filter { it.isCompleted }
+
+        val pauseDateFormatter = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
+        val pauseResumeFormatter = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.ENGLISH)
+        val pausedHabits = habits
+            .filter { habit ->
+                habit.id !in dueHabitIds &&
+                    habit.isPausedOn(selectedDate) &&
+                    (effectiveDomain == "All Habits" || habit.domain.equals(effectiveDomain, ignoreCase = true))
+            }
+            .sortedBy { it.sortOrder }
+            .mapNotNull { habit ->
+                val window = habit.pauseWindows.firstOrNull { it.contains(selectedDate) } ?: return@mapNotNull null
+                PausedHabitItem(
+                    habit = habit,
+                    pauseWindow = window,
+                    resumesOnLabel = window.resumesOnDate.format(pauseResumeFormatter),
+                    pausedUntilLabel = window.endDate.format(pauseDateFormatter),
+                )
+            }
 
         val dateFormatter = DateTimeFormatter.ofPattern("EEEE, MMM d", Locale.ENGLISH)
         val weekNumber = selectedDate.get(WeekFields.ISO.weekOfWeekBasedYear())
@@ -332,6 +385,11 @@ class DashboardViewModel(
         val firstPending = pending.firstOrNull()
         val firstCompleted = completed.firstOrNull()
         val (lead, highlight, tail) = when {
+            allDueCardItems.isEmpty() && pausedHabits.isNotEmpty() -> Triple(
+                "${pausedHabits.size} ${if (pausedHabits.size == 1) "habit is" else "habits are"} ",
+                "paused",
+                " on this date — your streaks remain protected until scheduled resume.",
+            )
             allDueCardItems.isEmpty() -> Triple(
                 "Rest day aligned — ",
                 "0 habits",
@@ -357,7 +415,7 @@ class DashboardViewModel(
 
         val activeBanner = undoToken?.let { token ->
             val currentHabit = habitById[token.habitBefore.id]
-            if (currentHabit != null && !CadenceEvaluator.hasCadenceChanged(token.habitBefore, currentHabit)) {
+            if (currentHabit != null && !CadenceEvaluator.hasHabitScheduleOrPauseChanged(token.habitBefore, currentHabit)) {
                 RescheduleBanner(
                     habitTitle = currentHabit.title,
                     fromDate = token.fromDate,
@@ -367,6 +425,8 @@ class DashboardViewModel(
                 null
             }
         }
+
+        val activeHabitsTodayCount = habits.count { !it.isPausedOn(today) }
 
         return DashboardUiState(
             isLoading = false,
@@ -384,10 +444,11 @@ class DashboardViewModel(
             sortMode = sortMode,
             pendingHabits = pending,
             completedHabits = completed,
+            pausedHabits = pausedHabits,
             momentumInsightLead = lead,
             momentumInsightHighlight = highlight,
             momentumInsightTail = tail,
-            totalActiveHabits = habits.size,
+            totalActiveHabits = activeHabitsTodayCount,
             longestStreakOverall = longestStreak,
             rescheduleBanner = activeBanner,
         )

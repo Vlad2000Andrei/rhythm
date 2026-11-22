@@ -3,10 +3,13 @@ package com.rhythm.habittracker.ui.habitdetail
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -27,21 +30,36 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.PauseCircleOutline
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -53,26 +71,33 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rhythm.habittracker.domain.model.CadenceType
 import com.rhythm.habittracker.domain.model.Habit
 import com.rhythm.habittracker.domain.model.HabitAccentColor
+import com.rhythm.habittracker.domain.model.HabitPauseWindow
 import com.rhythm.habittracker.domain.model.TargetTimeSlot
 import com.rhythm.habittracker.domain.model.TimeOfDayBucket
 import com.rhythm.habittracker.ui.components.RhythmMatrixCell
 import com.rhythm.habittracker.ui.components.rhythmMatrixCellColor
 import com.rhythm.habittracker.ui.theme.RhythmDeepGraphite
+import com.rhythm.habittracker.ui.theme.RhythmError
 import com.rhythm.habittracker.ui.theme.RhythmOnPrimary
 import com.rhythm.habittracker.ui.theme.RhythmOnSurface
 import com.rhythm.habittracker.ui.theme.RhythmOnSurfaceVariant
 import com.rhythm.habittracker.ui.theme.RhythmPrimary
 import com.rhythm.habittracker.ui.theme.RhythmSurface
+import com.rhythm.habittracker.ui.theme.RhythmSurfaceContainer
 import com.rhythm.habittracker.ui.theme.RhythmSurfaceContainerHigh
 import com.rhythm.habittracker.ui.theme.RhythmSurfaceContainerLow
 import com.rhythm.habittracker.ui.theme.RhythmSurfaceContainerLowest
 import com.rhythm.habittracker.ui.theme.RhythmTheme
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
@@ -95,6 +120,8 @@ fun HabitDetailScreen(
         uiState = uiState,
         onNavigateBack = onNavigateBack,
         onEditHabit = onEditHabit,
+        onPauseHabit = viewModel::pauseHabit,
+        onResumeOrCancelPause = viewModel::resumeOrCancelPause,
         modifier = modifier,
     )
 }
@@ -105,9 +132,13 @@ fun HabitDetailScreenContent(
     onNavigateBack: () -> Unit,
     onEditHabit: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    onPauseHabit: (LocalDate, LocalDate, Long?) -> Unit = { _, _, _ -> },
+    onResumeOrCancelPause: () -> Unit = {},
 ) {
     val habit = uiState.habit
     val accent = habit?.accentColor?.color ?: HabitAccentColor.ROYAL_BLUE.color
+    var pauseDialogEditingWindow by remember { mutableStateOf<HabitPauseWindow?>(null) }
+    var showPauseDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -137,6 +168,7 @@ fun HabitDetailScreenContent(
             HabitOverviewCard(
                 habit = habit,
                 accent = accent,
+                isPausedToday = uiState.activePause != null,
                 currentStreak = uiState.currentStreak,
                 bestStreak = uiState.bestStreak,
                 completionRatePercent = uiState.completionRatePercent,
@@ -158,6 +190,7 @@ fun HabitDetailScreenContent(
                 habit = habit,
                 accent = accent,
                 scheduleShortLabel = uiState.scheduleShortLabel,
+                effectiveTomorrowNotice = uiState.effectiveTomorrowNotice,
             )
 
             RecentRunWeekCard(
@@ -167,30 +200,119 @@ fun HabitDetailScreenContent(
                 scheduledThisWeek = uiState.scheduledThisWeek,
             )
 
-            Button(
-                onClick = { onEditHabit(habit.id) },
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = RhythmPrimary,
-                    contentColor = RhythmOnPrimary,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Edit,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+            val displayedPause = uiState.activePause ?: uiState.upcomingPauses.firstOrNull()
+            if (displayedPause != null) {
+                PauseStatusCard(
+                    pauseWindow = displayedPause,
+                    isActive = uiState.activePause != null,
+                    additionalUpcomingCount = if (uiState.activePause != null) {
+                        uiState.upcomingPauses.size
+                    } else {
+                        (uiState.upcomingPauses.size - 1).coerceAtLeast(0)
+                    },
+                    onEditDates = {
+                        pauseDialogEditingWindow = displayedPause
+                        showPauseDialog = true
+                    },
+                    onResumeOrCancel = onResumeOrCancelPause,
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Edit Habit",
-                    style = RhythmTheme.tokens.bodyMd,
-                    fontWeight = FontWeight.SemiBold,
-                )
+
+                Button(
+                    onClick = { onEditHabit(habit.id) },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RhythmPrimary,
+                        contentColor = RhythmOnPrimary,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Edit Habit",
+                        style = RhythmTheme.tokens.bodyMd,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            pauseDialogEditingWindow = null
+                            showPauseDialog = true
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, RhythmSurfaceContainerHigh),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = RhythmSurfaceContainerLowest,
+                            contentColor = RhythmOnSurface,
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.PauseCircleOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Pause",
+                            style = RhythmTheme.tokens.bodyMd,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+
+                    Button(
+                        onClick = { onEditHabit(habit.id) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RhythmPrimary,
+                            contentColor = RhythmOnPrimary,
+                        ),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .height(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Edit Habit",
+                            style = RhythmTheme.tokens.bodyMd,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
         }
+    }
+
+    if (showPauseDialog && habit != null) {
+        PauseHabitDialog(
+            habitTitle = habit.title,
+            today = uiState.today,
+            isCompletedToday = uiState.isCompletedToday,
+            editingWindow = pauseDialogEditingWindow,
+            onDismiss = { showPauseDialog = false },
+            onConfirm = { startDate, endDate, editingId ->
+                showPauseDialog = false
+                onPauseHabit(startDate, endDate, editingId)
+            },
+        )
     }
 }
 
@@ -244,6 +366,7 @@ private fun HabitDetailTopBar(
 private fun HabitOverviewCard(
     habit: Habit,
     accent: Color,
+    isPausedToday: Boolean,
     currentStreak: Int,
     bestStreak: Int,
     completionRatePercent: Int,
@@ -251,7 +374,7 @@ private fun HabitOverviewCard(
     totalScheduledDays: Int,
     scheduleShortLabel: String,
 ) {
-    val badgeText = habit.badgeLabel.ifBlank { habit.cadenceType.label }
+    val badgeText = habit.badgeLabel.ifBlank { habit.latestSchedule.cadenceType.label }
         .uppercase(Locale.ENGLISH)
 
     Surface(
@@ -300,17 +423,18 @@ private fun HabitOverviewCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    val statusColor = if (isPausedToday) Color(0xFFD97706) else accent
                     Icon(
-                        imageVector = Icons.Filled.Verified,
+                        imageVector = if (isPausedToday) Icons.Outlined.PauseCircleOutline else Icons.Filled.Verified,
                         contentDescription = null,
-                        tint = accent,
+                        tint = statusColor,
                         modifier = Modifier.size(14.dp),
                     )
                     Text(
-                        text = "ACTIVE CADENCE",
+                        text = if (isPausedToday) "PAUSED" else "ACTIVE CADENCE",
                         style = RhythmTheme.tokens.labelSm,
                         fontWeight = FontWeight.SemiBold,
-                        color = accent,
+                        color = statusColor,
                     )
                 }
             }
@@ -566,6 +690,7 @@ private fun HabitCompletionMatrixCard(
                                 RhythmMatrixCell(
                                     completionRatio = cell.completionRatio,
                                     isUnscheduledEmpty = cell.isUnscheduledEmpty,
+                                    isPausedEmpty = cell.isPausedEmpty,
                                     activeColor = accent,
                                     modifier = Modifier.size(14.dp),
                                     emptyColor = RhythmSurfaceContainerHigh,
@@ -637,7 +762,9 @@ private fun TargetScheduleReadOnlyCard(
     habit: Habit,
     accent: Color,
     scheduleShortLabel: String,
+    effectiveTomorrowNotice: Boolean,
 ) {
+    val latestSchedule = habit.latestSchedule
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = RhythmSurfaceContainerLowest,
@@ -661,22 +788,38 @@ private fun TargetScheduleReadOnlyCard(
                     fontWeight = FontWeight.SemiBold,
                     color = RhythmOnSurface,
                 )
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = RhythmSurfaceContainerHigh,
-                ) {
-                    Text(
-                        text = "READ ONLY",
-                        style = RhythmTheme.tokens.labelSm,
-                        fontWeight = FontWeight.Medium,
-                        color = RhythmOnSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (effectiveTomorrowNotice) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFFD97706).copy(alpha = 0.14f),
+                        ) {
+                            Text(
+                                text = "STARTS TOMORROW",
+                                style = RhythmTheme.tokens.labelSm,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFD97706),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            )
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = RhythmSurfaceContainerHigh,
+                    ) {
+                        Text(
+                            text = "READ ONLY",
+                            style = RhythmTheme.tokens.labelSm,
+                            fontWeight = FontWeight.Medium,
+                            color = RhythmOnSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
                 }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                habit.targetTimes.forEach { slot ->
+                latestSchedule.targetTimes.forEach { slot ->
                     val windowName = TimeOfDayBucket.fromSlot(slot).label
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -737,7 +880,7 @@ private fun TargetScheduleReadOnlyCard(
                                 },
                             ) {
                                 Text(
-                                    text = if (slot.enabled) "ACTIVE" else "PAUSED",
+                                    text = if (slot.enabled) "ACTIVE" else "MUTED",
                                     style = RhythmTheme.tokens.labelSm,
                                     fontWeight = FontWeight.SemiBold,
                                     color = if (slot.enabled) accent else RhythmOnSurfaceVariant,
@@ -897,6 +1040,23 @@ private fun RecentRunWeekCard(
                                         tint = Color.White,
                                         modifier = Modifier.size(16.dp),
                                     )
+                                } else if (day.isPaused) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(2.dp)
+                                                .height(10.dp)
+                                                .clip(CircleShape)
+                                                .background(RhythmOnSurfaceVariant.copy(alpha = 0.7f)),
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .width(2.dp)
+                                                .height(10.dp)
+                                                .clip(CircleShape)
+                                                .background(RhythmOnSurfaceVariant.copy(alpha = 0.7f)),
+                                        )
+                                    }
                                 } else {
                                     Box(
                                         modifier = Modifier
@@ -927,12 +1087,453 @@ private fun RecentRunWeekCard(
     }
 }
 
+@Composable
+private fun PauseStatusCard(
+    pauseWindow: HabitPauseWindow,
+    isActive: Boolean,
+    additionalUpcomingCount: Int,
+    onEditDates: () -> Unit,
+    onResumeOrCancel: () -> Unit,
+) {
+    val rangeFormatter = remember { DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH) }
+    val resumeFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d", Locale.ENGLISH) }
+    val amber = Color(0xFFD97706)
+    val dateRangeText = if (pauseWindow.startDate == pauseWindow.endDate) {
+        pauseWindow.startDate.format(rangeFormatter).uppercase(Locale.ENGLISH)
+    } else {
+        "${pauseWindow.startDate.format(rangeFormatter).uppercase(Locale.ENGLISH)} – ${pauseWindow.endDate.format(rangeFormatter).uppercase(Locale.ENGLISH)}"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = RhythmSurfaceContainerLowest,
+        border = BorderStroke(1.dp, amber.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.PauseCircleOutline,
+                        contentDescription = null,
+                        tint = amber,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = if (isActive) "PAUSED · $dateRangeText" else "PAUSE SCHEDULED · $dateRangeText",
+                        style = RhythmTheme.tokens.labelMd,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RhythmOnSurface,
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = amber.copy(alpha = 0.14f),
+                ) {
+                    Text(
+                        text = "${pauseWindow.durationDays}D",
+                        style = RhythmTheme.tokens.labelSm,
+                        fontWeight = FontWeight.Bold,
+                        color = amber,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    )
+                }
+            }
+
+            Text(
+                text = buildString {
+                    append("Resumes ${pauseWindow.resumesOnDate.format(resumeFormatter)} · Reminders muted & streak protected.")
+                    if (additionalUpcomingCount > 0) {
+                        append(" +$additionalUpcomingCount more scheduled.")
+                    }
+                },
+                style = RhythmTheme.tokens.bodySm,
+                color = RhythmOnSurfaceVariant,
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onEditDates,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, RhythmSurfaceContainerHigh),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp),
+                ) {
+                    Text(
+                        text = "Edit Dates",
+                        style = RhythmTheme.tokens.labelMd,
+                        color = RhythmOnSurface,
+                    )
+                }
+
+                Button(
+                    onClick = onResumeOrCancel,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isActive) RhythmPrimary else RhythmError.copy(alpha = 0.12f),
+                        contentColor = if (isActive) RhythmOnPrimary else RhythmError,
+                    ),
+                    modifier = Modifier
+                        .weight(1.2f)
+                        .height(40.dp),
+                ) {
+                    if (isActive) {
+                        Icon(
+                            imageVector = Icons.Outlined.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = if (isActive) "Resume Now" else "Cancel Pause",
+                        style = RhythmTheme.tokens.labelMd,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun PauseHabitDialog(
+    habitTitle: String,
+    today: LocalDate,
+    isCompletedToday: Boolean,
+    editingWindow: HabitPauseWindow?,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate, LocalDate, Long?) -> Unit,
+) {
+    val tokens = RhythmTheme.tokens
+    val isEditingStartedActive = editingWindow != null && !editingWindow.startDate.isAfter(today)
+    val defaultStart = editingWindow?.startDate ?: if (isCompletedToday) today.plusDays(1) else today
+    val defaultEnd = editingWindow?.endDate ?: defaultStart.plusDays(6)
+
+    var startDate by remember(editingWindow, today) { mutableStateOf(defaultStart) }
+    var endDate by remember(editingWindow, today) { mutableStateOf(defaultEnd) }
+    var pickingStartDate by remember { mutableStateOf(false) }
+    var pickingEndDate by remember { mutableStateOf(false) }
+
+    val dateFmt = remember { DateTimeFormatter.ofPattern("EEE, MMM d, yyyy", Locale.ENGLISH) }
+    val summaryFmt = remember { DateTimeFormatter.ofPattern("EEE, MMM d", Locale.ENGLISH) }
+    val durationDays = (endDate.toEpochDay() - startDate.toEpochDay() + 1L).toInt().coerceAtLeast(1)
+    val resumesOn = endDate.plusDays(1)
+
+    val quickDurations = remember {
+        listOf(
+            "1 Day" to 1L,
+            "3 Days" to 3L,
+            "1 Week" to 7L,
+            "2 Weeks" to 14L,
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RhythmSurfaceContainerLowest,
+        shape = RoundedCornerShape(14.dp),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "PAUSE HABIT",
+                    style = tokens.labelSm,
+                    fontWeight = FontWeight.SemiBold,
+                    color = RhythmOnSurfaceVariant,
+                )
+                Text(
+                    text = habitTitle,
+                    style = tokens.headlineMd,
+                    color = RhythmOnSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    quickDurations.forEach { (label, days) ->
+                        val targetEnd = startDate.plusDays(days - 1L)
+                        val minAllowedEnd = maxOf(startDate, today)
+                        val effectiveEnd = maxOf(targetEnd, minAllowedEnd)
+                        val selected = endDate == effectiveEnd
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (selected) RhythmPrimary else RhythmSurfaceContainerLow,
+                            border = BorderStroke(
+                                1.dp,
+                                if (selected) RhythmPrimary else RhythmSurfaceContainerHigh,
+                            ),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { endDate = effectiveEnd },
+                        ) {
+                            Text(
+                                text = label,
+                                style = tokens.labelSm,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (selected) RhythmOnPrimary else RhythmOnSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            )
+                        }
+                    }
+                }
+
+                // Start Date row
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = RhythmSurfaceContainerLow,
+                    border = BorderStroke(1.dp, RhythmSurfaceContainerHigh),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .then(
+                            if (isEditingStartedActive) Modifier else Modifier.clickable { pickingStartDate = true },
+                        ),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (isEditingStartedActive) "Started" else "Start Date",
+                            style = tokens.bodySm,
+                            color = RhythmOnSurfaceVariant,
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CalendarToday,
+                                contentDescription = null,
+                                tint = RhythmOnSurfaceVariant,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = startDate.format(dateFmt),
+                                style = tokens.labelMd,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isEditingStartedActive) RhythmOnSurfaceVariant else RhythmOnSurface,
+                            )
+                        }
+                    }
+                }
+
+                // End Date row
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = RhythmSurfaceContainerLow,
+                    border = BorderStroke(1.dp, RhythmSurfaceContainerHigh),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { pickingEndDate = true },
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "End Date",
+                            style = tokens.bodySm,
+                            color = RhythmOnSurfaceVariant,
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CalendarToday,
+                                contentDescription = null,
+                                tint = RhythmOnSurfaceVariant,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = endDate.format(dateFmt),
+                                style = tokens.labelMd,
+                                fontWeight = FontWeight.SemiBold,
+                                color = RhythmOnSurface,
+                            )
+                        }
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = RhythmSurfaceContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = "$durationDays ${if (durationDays == 1) "DAY" else "DAYS"} PAUSED · RESUMES ${resumesOn.format(summaryFmt).uppercase(Locale.ENGLISH)}",
+                            style = tokens.labelSm,
+                            fontWeight = FontWeight.SemiBold,
+                            color = RhythmOnSurface,
+                        )
+                        Text(
+                            text = "Reminders stay muted and streaks remain protected while paused.",
+                            style = tokens.bodySm,
+                            color = RhythmOnSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(startDate, endDate, editingWindow?.id) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RhythmPrimary,
+                    contentColor = RhythmOnPrimary,
+                ),
+            ) {
+                Text(if (editingWindow != null) "Update Pause" else "Pause Habit")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = RhythmOnSurfaceVariant)
+            }
+        },
+    )
+
+    if (pickingStartDate) {
+        val minStartMillis = today.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = startDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis >= minStartMillis
+            },
+        )
+        DatePickerDialog(
+            onDismissRequest = { pickingStartDate = false },
+            colors = DatePickerDefaults.colors(containerColor = RhythmSurfaceContainerLowest),
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pickerState.selectedDateMillis?.let { millis ->
+                            val picked = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                            val safePicked = maxOf(picked, today)
+                            startDate = safePicked
+                            if (endDate.isBefore(safePicked)) {
+                                endDate = safePicked
+                            }
+                        }
+                        pickingStartDate = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RhythmPrimary,
+                        contentColor = RhythmOnPrimary,
+                    ),
+                ) {
+                    Text("Confirm")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickingStartDate = false }) {
+                    Text("Cancel", color = RhythmOnSurfaceVariant)
+                }
+            },
+        ) {
+            DatePicker(
+                state = pickerState,
+                colors = DatePickerDefaults.colors(
+                    containerColor = RhythmSurfaceContainerLowest,
+                    selectedDayContainerColor = RhythmPrimary,
+                    selectedDayContentColor = RhythmOnPrimary,
+                    todayDateBorderColor = RhythmPrimary,
+                    todayContentColor = RhythmPrimary,
+                ),
+            )
+        }
+    }
+
+    if (pickingEndDate) {
+        val minEndDate = maxOf(startDate, today)
+        val minEndMillis = minEndDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = maxOf(endDate, minEndDate).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis >= minEndMillis
+            },
+        )
+        DatePickerDialog(
+            onDismissRequest = { pickingEndDate = false },
+            colors = DatePickerDefaults.colors(containerColor = RhythmSurfaceContainerLowest),
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pickerState.selectedDateMillis?.let { millis ->
+                            val picked = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                            endDate = maxOf(picked, minEndDate)
+                        }
+                        pickingEndDate = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RhythmPrimary,
+                        contentColor = RhythmOnPrimary,
+                    ),
+                ) {
+                    Text("Confirm")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickingEndDate = false }) {
+                    Text("Cancel", color = RhythmOnSurfaceVariant)
+                }
+            },
+        ) {
+            DatePicker(
+                state = pickerState,
+                colors = DatePickerDefaults.colors(
+                    containerColor = RhythmSurfaceContainerLowest,
+                    selectedDayContainerColor = RhythmPrimary,
+                    selectedDayContentColor = RhythmOnPrimary,
+                    todayDateBorderColor = RhythmPrimary,
+                    todayContentColor = RhythmPrimary,
+                ),
+            )
+        }
+    }
+}
+
 @Preview(showBackground = true, backgroundColor = 0xFFF8F9FB)
 @Composable
 fun HabitDetailScreenPreview() {
     val today = LocalDate.of(2026, 5, 16)
     val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-    val previewHabit = Habit(
+    val previewHabit = Habit.singleSchedule(
         id = 1L,
         title = "Deep Work",
         description = "After brewing double-shot espresso, terminal is open, phone in drawer. 90 minutes uninterrupted focus.",

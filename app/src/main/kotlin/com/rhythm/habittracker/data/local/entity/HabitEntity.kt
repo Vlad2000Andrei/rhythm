@@ -1,9 +1,11 @@
 package com.rhythm.habittracker.data.local.entity
 
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.Relation
 
 @Entity(tableName = "habits")
 data class HabitEntity(
@@ -14,6 +16,32 @@ data class HabitEntity(
     val domain: String,
     val subTag: String?,
     val colorHex: String,
+    val skipReminderIfCompleted: Boolean,
+    val sortOrder: Int,
+    val createdAtEpochDay: Long,
+    val rescheduledFromEpochDaysCsv: String = "",
+    val rescheduledToEpochDaysCsv: String = "",
+)
+
+@Entity(
+    tableName = "habit_schedules",
+    foreignKeys = [
+        ForeignKey(
+            entity = HabitEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["habitId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["habitId", "effectiveFromEpochDay"], unique = true),
+    ],
+)
+data class HabitScheduleEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+    val habitId: Long,
+    val effectiveFromEpochDay: Long,
     val cadenceType: String,
     val scheduledDaysCsv: String,
     val weeklyTargetMode: String,
@@ -29,13 +57,44 @@ data class HabitEntity(
     val cycleDaysOff: Int,
     val targetPerPeriod: Int,
     val targetTimesJson: String,
-    val skipReminderIfCompleted: Boolean,
     val timeOfDayBucket: String,
-    val sortOrder: Int,
     val anchorDateEpochDay: Long,
-    val createdAtEpochDay: Long,
-    val rescheduledFromEpochDaysCsv: String = "",
-    val rescheduledToEpochDaysCsv: String = "",
+)
+
+@Entity(
+    tableName = "habit_pauses",
+    foreignKeys = [
+        ForeignKey(
+            entity = HabitEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["habitId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["habitId"]),
+    ],
+)
+data class HabitPauseEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+    val habitId: Long,
+    val startEpochDay: Long,
+    val endEpochDay: Long,
+)
+
+data class HabitWithDetails(
+    @Embedded val habit: HabitEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "habitId",
+    )
+    val schedules: List<HabitScheduleEntity>,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "habitId",
+    )
+    val pauses: List<HabitPauseEntity>,
 )
 
 @Entity(

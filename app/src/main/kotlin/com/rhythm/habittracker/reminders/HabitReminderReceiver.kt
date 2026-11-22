@@ -40,16 +40,29 @@ class HabitReminderReceiver : BroadcastReceiver() {
                 val repo = app.container.habitRepository
                 val habit = repo.getHabitById(habitId) ?: return@launch
                 val today = LocalDate.now()
-                val isScheduledToday = CadenceEvaluator.isHabitScheduledOn(habit, today)
+                val todaySchedule = habit.scheduleForDate(today)
+                val slotEnabled = todaySchedule.targetTimes.getOrNull(slotIndex)?.enabled == true
+                val isPausedToday = habit.isPausedOn(today)
+
+                val completedDatesThisWeek = repo.getCompletedDatesInWeek(
+                    habitId = habitId,
+                    date = today,
+                    dailyTargetCount = todaySchedule.dailyTargetCount,
+                )
+                val isDueToday = CadenceEvaluator.isHabitDueOn(habit, today, completedDatesThisWeek)
                 val completedInstances = repo.getCompletedInstancesOn(habitId, today)
                 val isCompletedToday = slotIndex in completedInstances ||
-                    completedInstances.size >= habit.dailyTargetCount
+                    completedInstances.size >= todaySchedule.dailyTargetCount
 
-                if (isScheduledToday && !(habit.skipReminderIfCompleted && isCompletedToday)) {
+                if (!isPausedToday &&
+                    slotEnabled &&
+                    isDueToday &&
+                    !(habit.skipReminderIfCompleted && isCompletedToday)
+                ) {
                     showNotification(context, habit.id, habit.title, habit.description)
                 }
 
-                // Schedule next day's reminder slot
+                // Schedule next occurrence across schedule transitions & pause boundaries
                 app.container.reminderScheduler.scheduleHabitReminders(habit)
             } finally {
                 pendingResult.finish()
